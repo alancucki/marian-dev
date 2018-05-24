@@ -1,7 +1,8 @@
 add_executable(iris_example iris/iris.cpp)
+add_executable(playground playground/playground.cpp)
 add_executable(mnist_example mnist/mnist_ffnn.cpp)
 
-foreach(exec iris_example mnist_example)
+foreach(exec iris_example mnist_example playground)
   target_link_libraries(${exec} marian ${EXT_LIBS})
   if(CUDA_FOUND)
     target_link_libraries(${exec} marian marian_cuda ${EXT_LIBS})
