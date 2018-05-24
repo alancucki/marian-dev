@@ -47,6 +47,10 @@ Expr operator-(Expr a) {
   return Expression<NegNodeOp>(a);
 };
 
+Expr max(Expr a) {
+  return Expression<MaxNodeOp>(a);
+}
+
 Expr softmax(Expr a, Expr mask) {
   return Expression<SoftmaxNodeOp>(a, mask);
 }

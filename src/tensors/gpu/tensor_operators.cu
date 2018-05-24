@@ -403,6 +403,100 @@ void LogSoftmax(Tensor out, Tensor in) {
       out->data(), out->shape(), in->data());
 }
 
+__global__ void gMax(float* out,
+                     const functional::Shape outShape,
+                     const float* in) {
+  int rows = outShape.elements() / outShape.back();
+  int cols = outShape.back();
+
+  for(int bid = 0; bid < rows; bid += gridDim.x) {
+    int j = bid + blockIdx.x;
+    if(j < rows) {
+      float* so = out + j * cols;
+      const float* sp = in + j * cols;
+
+      extern __shared__ float _share[];
+
+      float* _max = _share + blockDim.x;
+      _max[threadIdx.x] = sp[threadIdx.x];
+      for(int tid = 0; tid < cols; tid += blockDim.x) {
+        int id = tid + threadIdx.x;
+        if(id < cols) {
+          if(sp[id] > _max[threadIdx.x])
+            _max[threadIdx.x] = sp[id];
+        }
+      }
+      __syncthreads();
+      int len = blockDim.x;
+      while(len != 1) {
+        __syncthreads();
+        int skip = (len + 1) >> 1;
+        if(threadIdx.x < (len >> 1)) {
+          if(_max[threadIdx.x + skip] > _max[threadIdx.x]) {
+            _max[threadIdx.x] = _max[threadIdx.x + skip];
+          }
+        }
+        len = (len + 1) >> 1;
+      }
+      __syncthreads();
+      float out = _max[0];
+      __syncthreads();
+    }
+  }
+}
+
+void Max(float* out, Tensor in) {
+  cudaSetDevice(out->getDevice().no);
+
+  size_t m = out->shape().elements() / out->shape().back();
+  size_t k = out->shape().back();
+
+  int blocks = std::min(MAX_BLOCKS, (int)m);
+  int threads = std::min(MAX_THREADS, (int)k);
+  int shared = sizeof(float) * threads * 2;
+
+  gMax<<<blocks, threads, shared>>>(
+      out, out->shape(), in->data());
+}
+
+// blocks compute rows, thread compute columns within each row
+// softmax is applied to each row separately
+__global__ void gMaxGrad(float* grad,
+                         const float* adj,
+                         const float* val, // Assume val to be a 1-D array
+                         const int rows,
+                         const int cols) {
+  for(int bid = 0; bid < rows; bid += gridDim.x) {
+    int j = bid + blockIdx.x;
+    if(j < rows) {
+      const float* so = grad + j * cols;
+      const float* sp = in + j * cols;
+
+      for(int tid = 0; tid < cols; tid += blockDim.x) {
+        int id = tid + threadIdx.x;
+        if(id < cols) {
+          so[id] = (sp[id] == maxVal[j] ? adj[j] * val[j] else 0.0);
+        }
+      }
+      // TODO Unnecessary?
+      __syncthreads();
+    }
+  }
+}
+
+void MaxGrad(Tensor grad, Tensor adj, Tensor val) {
+  cudaSetDevice(adj->getDevice().no);
+
+  // grad is m-by-k, val is 1-by-k matrix
+  int m = grad->shape().elements() / grad->shape().back();
+  int k = grad->shape().back();
+
+  int blocks = std::min(MAX_BLOCKS, m);
+  int threads = std::min(MAX_THREADS, k);
+  gMaxGrad<<<blocks, threads, shared>>>(
+      grad->data(), adj->data(), val->data(), m, k);
+}
+
 ///////////////////////////////////////////////////////
 
 __global__ void gSoftmaxGrad(float* grad,

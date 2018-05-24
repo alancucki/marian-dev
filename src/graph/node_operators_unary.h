@@ -328,6 +328,43 @@ struct SwishNodeOp : public UnaryNodeOp {
   const std::string type() { return "swish"; }
 };
 
+struct MaxNodeOp : public UnaryNodeOp {
+  MaxNodeOp(Expr a) : UnaryNodeOp(a, newShape(a)) {}
+
+  Shape newShape(Expr a) {
+    Shape shape1 = a->shape();
+    shape1.set(0, 1);
+    return shape1;
+  }
+
+  NodeOps forwardOps() {
+    return {
+        NodeOp(Max(val_, child(0)->val()))};
+  }
+
+  virtual size_t hash() {
+    if(!hash_) {
+      hash_ = NaryNodeOp::hash();
+    }
+    return hash_;
+  }
+
+  virtual bool equal(Expr node) {
+    if(!NaryNodeOp::equal(node))
+      return false;
+    Ptr<MaxNodeOp> cnode = std::dynamic_pointer_cast<MaxNodeOp>(node);
+    if(!cnode)
+      return false;
+    return true;
+  }
+
+  NodeOps backwardOps() {
+    return {NodeOp(MaxGrad(child(0)->grad(), adj_, val_))};
+  }
+
+  const std::string type() { return "max"; }
+};
+
 struct SoftmaxNodeOp : public UnaryNodeOp {
   SoftmaxNodeOp(Expr a) : UnaryNodeOp(a), mask_(nullptr) {}
 
