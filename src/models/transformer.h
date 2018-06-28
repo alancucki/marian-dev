@@ -372,6 +372,100 @@ public:
 
     return output;
   }
+
+  /*
+    Reference: https://github.com/tensorflow/tensor2tensor/blob/master/tensor2tensor/utils/expert_utils.py
+  */
+  Expr LayerStrictlyBalancedMoE(Ptr<ExpressionGraph> graph,
+                                Ptr<Options> options,
+                                std::string prefix,
+                                Expr input,
+                                bool inference = false) {
+    // TODO Different behavior during inference?
+    using namespace keywords;
+
+    // TODO Set some pre-conditions
+    // ABORT_IF(depthFfn < 1, "Filter depth {} is smaller than 1", depthFfn);
+
+    int hidExperts = options->get<int>("mixofexperts-dim-hid");
+    int numExperts = options->get<int>("mixofexperts-num-experts");
+    int k = options->get<int>("mixofexperts-sel-experts");
+    // auto act = options->get<std::string>("mixofexperts-ffn-activation");
+    std::string act("relu");
+
+    int dimModel = input->shape()[-1];
+    int numTokens = input->shape()[-3] * input->shape()[-2];
+    int m = (int)std::ceil(1.0 * k * numTokens / numExperts);
+
+    // (TOKENS, DIM)
+    auto inputFlat = reshape(input, {numTokens, dimModel});
+
+    // Compute the gate
+    auto gateW = graph->param(
+        prefix + "_GateW", {dimModel, numExperts},
+        inits::glorot_uniform);
+
+    // (TOKENS, EXPERTS)
+    auto gate = dot(inputFlat, gateW);
+    // auto topk = top_k(transpose(gate), m);
+
+    // (EXPERTS, M)
+    auto tr = transpose(gate);
+    auto topInds = top_k_inds(tr, m);
+    topInds->setTrainable(false);
+    tr->setTrainable(false);
+
+    // (TOKENS, EXPERTS)
+    auto soft = softmax(gate);
+    auto topLogits = balanced_moe_normalize_gate(soft, topInds, numTokens);
+
+    // (EXPERTS, M, DIM)
+    auto sliced = balanced_moe_slicer(inputFlat, topInds);
+
+    // (EXPERTS, M, DIM)
+    auto W1 = graph->param(prefix + "_Expert__W1",
+                           {numExperts, dimModel, hidExperts},
+                           inits::glorot_uniform);
+    auto W2 = graph->param(prefix + "_Expert__W2",
+                           {numExperts, hidExperts, dimModel},
+                           inits::glorot_uniform);
+    auto exp1 = bdot(sliced, W1);
+    auto exp2 = relu(exp1);
+
+    auto expOut = bdot(exp2, W2);
+    auto weighted = expOut * reshape(topLogits, {numExperts, m, 1});
+ 
+    // (TOKENS, DIM)
+    auto stitched = balanced_moe_stitcher(weighted, topInds, numTokens);
+
+    // (BSZ, SEQ_LEN, DIM)
+    auto reshaped = reshape(stitched, input->shape());
+
+    /*
+    gate->debug("GATE" + gate->label());
+    gateW->debug("GATE_W" + gateW->label());
+    soft->debug("SOFTMAX" + soft->label());
+    topLogits->debug("WEIGHTS" + topLogits->label());
+    topInds->debug("TOPINDS" + topInds->label());
+    expOut->debug("EXP_OUT" + expOut->label());
+    weighted->debug("WEIGHTED" + weighted->label());
+    sliced->debug("SLICED" + sliced->label());
+    inputFlat->debug("INPUT_FLAT" + inputFlat->label());
+
+    std::cout << "M:           " << m << std::endl;
+    std::cout << "INPUT:       " << input->shape() << std::endl;
+    std::cout << "INPUT FLAT:  " << inputFlat->shape() << std::endl;
+    std::cout << "GATE:        " << gate->shape() << std::endl;
+    std::cout << "TOP INDS:    " << topInds->shape() << std::endl;
+    std::cout << "SHREDED:     " << shredded->shape() << std::endl;
+    std::cout << "EXPERTIZED2: " << expertized2->shape() << std::endl;
+    std::cout << "W2:          " << W2->shape() << std::endl;
+    std::cout << "EXPERTIZED:  " << expertized->shape() << std::endl;
+    std::cout << "STITCHED:    " << stitched->shape() << std::endl;
+    std::cout << "RESHAPED:    " << reshaped->shape() << std::endl;
+    */
+    return reshaped;
+  }
 };
 
 class EncoderTransformer : public EncoderBase, public Transformer {
@@ -654,11 +748,27 @@ public:
         }
       }
 
-      query = LayerFFN(graph,
-                       options_,
-                       prefix_ + "_l" + std::to_string(i) + "_ffn",
-                       query,
-                       inference_);
+      if(opt<int>("mixofexperts-layer-index") == i) {
+        if(opt<std::string>("mixofexperts-layer-type") == "balanced_moe") {
+          query = LayerStrictlyBalancedMoE(graph,
+                                           options_,
+                                           prefix_ + "_l" + std::to_string(i) + "_moebalanced",
+                                           query,
+                                           inference_);
+        } else if(opt<std::string>("mixofexperts-layer-type") == "large-attn") {
+          // TODO
+          ABORT("Not implemented");
+        } else {
+          ABORT("Unknown value for enhanced layer type");
+        }
+
+      } else {
+        query = LayerFFN(graph,
+                         options_,
+                         prefix_ + "_l" + std::to_string(i) + "_ffn",
+                         query,
+                         inference_);
+      }
     }
 
     auto decoderContext = TransposeTimeBatch(query);

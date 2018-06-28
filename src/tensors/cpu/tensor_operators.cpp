@@ -331,6 +331,109 @@ void LogSoftmaxGrad(Tensor grad_, Tensor adj_, Tensor val_) {
   }
 }
 
+void Max(Tensor out, Tensor in) {
+// TODO
+  ABORT("Not implemented!");
+}
+
+void MaxGrad(Tensor grad, Tensor adj, Tensor val, Tensor in) {
+  // TODO
+  ABORT("Not implemented!");
+}
+
+void TopK(Tensor out, const size_t k, Tensor in) {
+  // TODO
+  ABORT("Not implemented!");
+}
+
+void TopKGrad(Tensor grad, Tensor adj, Tensor val, Tensor in) {
+  // TODO
+  ABORT("Not implemented!");
+}
+
+void TopKInds(Tensor out, const size_t k, Tensor in) {
+  // TODO
+  ABORT("Not implemented!");
+}
+
+void TopKMask(Tensor out, const size_t k, Tensor in) {
+  // TODO
+  ABORT("Not implemented!");
+}
+
+void TopKIndsGrad(Tensor out, Tensor adj) {
+  // TODO
+  ABORT("Not implemented!");
+}
+
+void BalancedMoeSlicer(Tensor out, Tensor in, Tensor inds) {
+  // TODO
+  ABORT("Not implemented!");
+}
+
+void BalancedMoeSlicerGrad(Tensor grad, Tensor val, Tensor inds, Tensor adj) {
+  // TODO
+  ABORT("Not implemented!");
+}
+
+void BalancedMoeSlicerWithMask(Tensor out, Tensor in, Tensor inds) {
+  // TODO
+  ABORT("Not implemented!");
+}
+
+void BalancedMoeSlicerWithMaskGrad(Tensor grad, Tensor val, Tensor inds, Tensor adj) {
+  // TODO
+  ABORT("Not implemented!");
+}
+
+void BalancedMoeStitcher(
+    Tensor out, Tensor in, Tensor inds, const size_t numTokens) {
+  // TODO
+  ABORT("Not implemented!");
+}
+
+void BalancedMoeStitcherGrad(
+    Tensor out, Tensor in, Tensor inds, Tensor adj) {
+  // TODO
+  ABORT("Not implemented!");
+}
+
+void BalancedMoeStitcherWithMask(
+    Tensor out, Tensor in, Tensor inds) {
+  // TODO
+  ABORT("Not implemented!");
+}
+
+void BalancedMoeStitcherWithMaskGrad(
+    Tensor out, Tensor in, Tensor inds, Tensor adj) {
+  // TODO
+  ABORT("Not implemented!");
+}
+
+void BalancedMoeNormalizeGate(
+    Tensor out, Tensor in, Tensor inds, const int numTokens) {
+  // TODO
+  ABORT("Not implemented!");
+}
+
+void BalancedMoeNormalizeGateGrad(
+    Tensor out, Tensor in, Tensor val, Tensor inds, Tensor adj) {
+  // TODO
+  ABORT("Not implemented!");
+}
+
+void BalancedMoeNormalizeGateWithMask(
+    Tensor out, Tensor in, Tensor inds, const int numTokens) {
+  // TODO
+  ABORT("Not implemented!");
+}
+
+void BalancedMoeNormalizeGateWithMaskGrad(
+    Tensor out, Tensor in, Tensor val, Tensor inds, Tensor adj) {
+  // TODO
+  ABORT("Not implemented!");
+}
+
 void CopyRows(Tensor out_,
               const Tensor in_,
               const std::vector<size_t>& indices) {

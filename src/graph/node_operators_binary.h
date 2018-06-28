@@ -262,6 +262,8 @@ class DotBatchedNodeOp : public NaryNodeOp {
 private:
   bool transA_;
   bool transB_;
+  std::vector<size_t> indicesA_;
+  std::vector<size_t> indicesB_;
   float scalar_;
 
 public:
@@ -269,6 +271,22 @@ public:
       : NaryNodeOp({a, b}, newShape(a, b, transA, transB)),
         transA_(transA),
         transB_(transB),
+        indicesA_({}),
+        indicesB_({}),
+        scalar_(scalar) {}
+
+  DotBatchedNodeOp(Expr a,
+                   Expr b,
+                   bool transA,
+                   bool transB,
+                   const std::vector<size_t>& indicesA,
+                   const std::vector<size_t>& indicesB,
+                   float scalar)
+      : NaryNodeOp({a, b}, newShape(a, b, transA, transB)),
+        transA_(transA),
+        transB_(transB),
+        indicesA_(indicesA),
+        indicesB_(indicesB),
         scalar_(scalar) {}
 
   Shape newShape(Expr a, Expr b, bool transA, bool transB) {
@@ -293,13 +311,26 @@ public:
 
   NodeOps forwardOps() {
     // C = alpha * dot(op(A), op(B))
-    return {NodeOp(ProdBatched(val_,
-                               child(0)->val(),
-                               child(1)->val(),
-                               transA_,
-                               transB_,
-                               0.f,
-                               scalar_))};
+    // Use strided (faster) cuBLAS call
+    if(indicesA_.size() == 0 && indicesB_.size() == 0) {
+      return {NodeOp(ProdBatched(val_,
+                                 child(0)->val(),
+                                 child(1)->val(),
+                                 transA_,
+                                 transB_,
+                                 0.f,
+                                 scalar_))};
+    } else {
+      return {NodeOp(ProdBatched(val_,
+                                 child(0)->val(),
+                                 child(1)->val(),
+                                 indicesA_,
+                                 indicesB_,
+                                 transA_,
+                                 transB_,
+                                 0.f,
+                                 scalar_))};
+    }
   }
 
   NodeOps backwardOps() {
@@ -309,68 +340,73 @@ public:
     // beta set to 1.0 in gemm, C = alpha * dot(op(A), op(B)) + beta * C
     // to sum gradients from different graph parts
 
-    if(!transA_ && transB_)
+    if(indicesA_.size() > 0 || indicesB_.size() > 0) {
+      ABORT("Not implemented!");
+
+    } else { // Stided cuBLAS calls
+      if(!transA_ && transB_)
+        return {NodeOp(ProdBatched(child(0)->grad(),
+                                   adj_,
+                                   child(1)->val(),
+                                   false,
+                                   false,
+                                   1.0,
+                                   scalar_)),
+                NodeOp(ProdBatched(child(1)->grad(),
+                                   adj_,
+                                   child(0)->val(),
+                                   true,
+                                   false,
+                                   1.0,
+                                   scalar_))};
+
+      if(transA_ && !transB_)
+        return {NodeOp(ProdBatched(child(0)->grad(),
+                                   child(1)->val(),
+                                   adj_,
+                                   false,
+                                   true,
+                                   1.0,
+                                   scalar_)),
+                NodeOp(ProdBatched(child(1)->grad(),
+                                   child(0)->val(),
+                                   adj_,
+                                   false,
+                                   false,
+                                   1.0,
+                                   scalar_))};
+
+      if(transA_ && transB_)
+        return {NodeOp(ProdBatched(child(0)->grad(),
+                                   child(1)->val(),
+                                   adj_,
+                                   true,
+                                   true,
+                                   1.0,
+                                   scalar_)),
+                NodeOp(ProdBatched(child(1)->grad(),
+                                   adj_,
+                                   child(0)->val(),
+                                   true,
+                                   true,
+                                   1.0,
+                                   scalar_))};
+
       return {NodeOp(ProdBatched(child(0)->grad(),
                                  adj_,
                                  child(1)->val(),
                                  false,
-                                 false,
-                                 1.0,
-                                 scalar_)),
-              NodeOp(ProdBatched(child(1)->grad(),
-                                 adj_,
-                                 child(0)->val(),
-                                 true,
-                                 false,
-                                 1.0,
-                                 scalar_))};
-
-    if(transA_ && !transB_)
-      return {NodeOp(ProdBatched(child(0)->grad(),
-                                 child(1)->val(),
-                                 adj_,
-                                 false,
                                  true,
                                  1.0,
                                  scalar_)),
               NodeOp(ProdBatched(child(1)->grad(),
                                  child(0)->val(),
                                  adj_,
-                                 false,
+                                 true,
                                  false,
                                  1.0,
                                  scalar_))};
-
-    if(transA_ && transB_)
-      return {NodeOp(ProdBatched(child(0)->grad(),
-                                 child(1)->val(),
-                                 adj_,
-                                 true,
-                                 true,
-                                 1.0,
-                                 scalar_)),
-              NodeOp(ProdBatched(child(1)->grad(),
-                                 adj_,
-                                 child(0)->val(),
-                                 true,
-                                 true,
-                                 1.0,
-                                 scalar_))};
-
-    return {NodeOp(ProdBatched(child(0)->grad(),
-                               adj_,
-                               child(1)->val(),
-                               false,
-                               true,
-                               1.0,
-                               scalar_)),
-            NodeOp(ProdBatched(child(1)->grad(),
-                               child(0)->val(),
-                               adj_,
-                               true,
-                               false,
-                               1.0,
-                               scalar_))};
+    }
   }
 
   const std::string type() { return "•"; }
@@ -741,5 +777,181 @@ public:
 
 protected:
   ConvolutionWrapper conv_;
+};
+
+class BalancedMoeSlicerOp : public NaryNodeOp {
+public:
+  BalancedMoeSlicerOp(Expr a, Expr b)
+      : NaryNodeOp({a, b}, newShape(a, b)) {}
+
+  Shape newShape(Expr a, Expr b) {
+    // (EXPERTS, M, DIM)
+    // FIXME a->shape() is 2-d, this might not work
+    return Shape({b->shape()[-2], b->shape()[-1], a->shape()[-1]});
+  }
+
+  NodeOps forwardOps() {
+    return {NodeOp(
+        BalancedMoeSlicer(val_, child(0)->val(), child(1)->val()))};
+  }
+
+  NodeOps backwardOps() {
+    return {NodeOp(BalancedMoeSlicerGrad(child(0)->grad(),
+                                         child(0)->val(),
+                                         child(1)->val(),
+                                         adj_))};
+  }
+
+  const std::string type() { return "b_moe_slicer"; }
+};
+
+class BalancedMoeSlicerWithMaskOp : public NaryNodeOp {
+public:
+  BalancedMoeSlicerWithMaskOp(Expr a, Expr b, int m)
+      : NaryNodeOp({a, b}, newShape(a, b, m)) {}
+
+  Shape newShape(Expr a, Expr b, int m) {
+    // (EXPERTS, M, DIM)
+    // FIXME a->shape() is 2-d, this might not work
+    return Shape({b->shape()[-1], m, a->shape()[-1]});
+  }
+
+  NodeOps forwardOps() {
+    return {NodeOp(
+        BalancedMoeSlicerWithMask(val_, child(0)->val(), child(1)->val()))};
+  }
+
+  NodeOps backwardOps() {
+    return {NodeOp(BalancedMoeSlicerWithMaskGrad(child(0)->grad(),
+                                                 child(0)->val(),
+                                                 child(1)->val(),
+                                                 adj_))};
+  }
+
+  const std::string type() { return "b_moe_slicer"; }
+};
+
+class BalancedMoeStitcherOp : public NaryNodeOp {
+private:
+  const int numTokens_;
+public:
+  BalancedMoeStitcherOp(Expr a, Expr b, const int numTokens)
+      : NaryNodeOp({a, b}, newShape(a, b, numTokens)), numTokens_(numTokens) {}
+
+  Shape newShape(Expr a, Expr b, const int numTokens) {
+    // (TOKENS, DIM)
+    return Shape({numTokens, a->shape()[-1]});
+  }
+
+  NodeOps forwardOps() {
+    return {NodeOp(BalancedMoeStitcher(val_,
+                                       child(0)->val(),
+                                       child(1)->val(),
+                                       numTokens_))};
+  }
+
+  NodeOps backwardOps() {
+    return {NodeOp(BalancedMoeStitcherGrad(child(0)->grad(),
+                                           child(0)->val(),
+                                           child(1)->val(),
+                                           adj_))};
+  }
+
+  const std::string type() { return "b_moe_stitcher"; }
+};
+
+class BalancedMoeStitcherWithMaskOp : public NaryNodeOp {
+public:
+  BalancedMoeStitcherWithMaskOp(Expr a, Expr b)
+      : NaryNodeOp({a, b}, newShape(a, b)) {}
+
+  Shape newShape(Expr a, Expr b) {
+    // (TOKENS, DIM)
+    return Shape({b->shape()[-2], a->shape()[-1]});
+  }
+
+  NodeOps forwardOps() {
+    return {NodeOp(BalancedMoeStitcherWithMask(val_,
+                                               child(0)->val(),
+                                               child(1)->val()))};
+  }
+
+  NodeOps backwardOps() {
+    return {NodeOp(BalancedMoeStitcherWithMaskGrad(child(0)->grad(),
+                                                   child(0)->val(),
+                                                   child(1)->val(),
+                                                   adj_))};
+  }
+
+  const std::string type() { return "b_moe_stitcher"; }
+};
+
+class BalancedMoeNormalizeGateOp : public NaryNodeOp {
+private:
+  const int numTokens_;
+public:
+  BalancedMoeNormalizeGateOp(Expr a, Expr b, const int numTokens)
+      : NaryNodeOp({a, b}, newShape(b)), numTokens_(numTokens) {}
+
+  Shape newShape(Expr b) {
+    return b->shape();
+  }
+
+  NodeOps forwardOps() {
+    return {NodeOp(BalancedMoeNormalizeGate(val_,
+                                            child(0)->val(),
+                                            child(1)->val(),
+                                            numTokens_))};
+  }
+
+  NodeOps backwardOps() {
+    return {NodeOp(BalancedMoeNormalizeGateGrad(child(0)->grad(),
+                                                child(0)->val(),
+                                                val_,
+                                                child(1)->val(),
+                                                adj_))};
+
+    // return {NodeOp(BalancedMoeStitcherGrad(child(0)->grad(),
+    //                                        child(0)->val(),
+    //                                        child(1)->val(),
+    //                                        adj_))};
+  }
+
+  const std::string type() { return "b_moe_norm_gate"; }
+};
+
+class BalancedMoeNormalizeGateWithMaskOp : public NaryNodeOp {
+private:
+  const int m_;
+public:
+  BalancedMoeNormalizeGateWithMaskOp(Expr a, Expr b, const int m)
+      : NaryNodeOp({a, b}, newShape(a, m)), m_(m) {}
+
+  Shape newShape(Expr a, const int m) {
+    // (EXPERTS, M)
+    return Shape({a->shape()[-1], m});
+  }
+
+  NodeOps forwardOps() {
+    return {NodeOp(BalancedMoeNormalizeGateWithMask(val_,
+                                                    child(0)->val(),
+                                                    child(1)->val(),
+                                                    m_))};
+  }
+
+  NodeOps backwardOps() {
+    return {NodeOp(BalancedMoeNormalizeGateWithMaskGrad(child(0)->grad(),
+                                                        child(0)->val(),
+                                                        val_,
+                                                        child(1)->val(),
+                                                        adj_))};
+
+    // return {NodeOp(BalancedMoeStitcherGrad(child(0)->grad(),
+    //                                        child(0)->val(),
+    //                                        child(1)->val(),
+    //                                        adj_))};
+  }
+
+  const std::string type() { return "b_moe_norm_gate"; }
 };
 }

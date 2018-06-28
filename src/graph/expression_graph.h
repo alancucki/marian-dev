@@ -225,6 +225,8 @@ public:
     while(!nodesForward_.empty()) {
       auto v = nodesForward_.front();
       v->allocate();
+      // XXX
+      // std::cout << "INITIALIZING NODE: " << v << "\t" << v->label() << "\t" << v->shape() << "\n";
       v->init();
       v->forward();
 
@@ -238,10 +240,14 @@ public:
       if(inferenceOnly_)
         v->children().clear();
       nodesForward_.pop_front();
+
+      if(v->pauseForwarding)
+        break;
     }
   }
 
   void backward() {
+
     ABORT_IF(topNodes_.size() > 1,
              "There are more than one top most node for backward step");
 

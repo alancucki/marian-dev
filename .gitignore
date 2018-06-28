@@ -48,3 +48,6 @@ examples/mnist/*ubyte
 # Contrib
 /.ycm_extra_conf.py
 /.vimrc
+
+# Temp trainings
+marian-examples/

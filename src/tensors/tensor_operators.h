@@ -65,8 +65,17 @@ void Reduce(Functor functor, marian::Tensor out, Tensors... tensors) {
   DISPATCH7(Prod, marian::Tensor, const marian::Tensor, const marian::Tensor, bool, bool, float, float)
   DISPATCH8(ProdWithBias, marian::Tensor, const marian::Tensor, const marian::Tensor, const marian::Tensor, bool, bool, float, float)
   DISPATCH7(ProdBatched, marian::Tensor, const marian::Tensor, const marian::Tensor, bool, bool, float, float)
+  DISPATCH9(ProdBatched, marian::Tensor, const marian::Tensor, const marian::Tensor, const std::vector<size_t>&, const std::vector<size_t>&, bool, bool, float, float)
 
   DISPATCH2(Dropout, marian::Tensor, float)
+
+  DISPATCH2(Max, marian::Tensor, marian::Tensor)
+  DISPATCH4(MaxGrad, marian::Tensor, marian::Tensor, marian::Tensor, marian::Tensor);
+  DISPATCH3(TopK, marian::Tensor, const size_t, marian::Tensor);
+  DISPATCH4(TopKGrad, marian::Tensor, marian::Tensor, marian::Tensor, marian::Tensor);
+  DISPATCH3(TopKInds, marian::Tensor, const size_t, marian::Tensor);
+  DISPATCH3(TopKMask, marian::Tensor, const size_t, marian::Tensor);
+  DISPATCH2(TopKIndsGrad, marian::Tensor, marian::Tensor); // XXX
 
   DISPATCH3(Softmax, marian::Tensor, marian::Tensor, marian::Tensor)
   DISPATCH3(SoftmaxGrad, marian::Tensor, marian::Tensor, marian::Tensor)
@@ -81,6 +90,20 @@ void Reduce(Functor functor, marian::Tensor out, Tensors... tensors) {
   DISPATCH4(Shift, marian::Tensor, marian::Tensor, marian::Shape, bool)
 
   DISPATCH3(Concatenate, marian::Tensor, const std::vector<marian::Tensor>&, int)
+
+  DISPATCH3(BalancedMoeSlicer, marian::Tensor, marian::Tensor, marian::Tensor)
+  DISPATCH4(BalancedMoeSlicerGrad, marian::Tensor, marian::Tensor, marian::Tensor, marian::Tensor)
+  DISPATCH3(BalancedMoeSlicerWithMask, marian::Tensor, marian::Tensor, marian::Tensor)
+  DISPATCH4(BalancedMoeSlicerWithMaskGrad, marian::Tensor, marian::Tensor, marian::Tensor, marian::Tensor)
+  DISPATCH4(BalancedMoeStitcher, marian::Tensor, marian::Tensor, marian::Tensor, const size_t) // TODO size_t ?
+  DISPATCH4(BalancedMoeStitcherGrad, marian::Tensor, marian::Tensor, marian::Tensor, marian::Tensor)
+  DISPATCH3(BalancedMoeStitcherWithMask, marian::Tensor, marian::Tensor, marian::Tensor)
+  DISPATCH4(BalancedMoeStitcherWithMaskGrad, marian::Tensor, marian::Tensor, marian::Tensor, marian::Tensor)
+  DISPATCH4(BalancedMoeNormalizeGate, marian::Tensor, marian::Tensor, marian::Tensor, const int)
+  DISPATCH5(BalancedMoeNormalizeGateGrad, marian::Tensor, marian::Tensor, marian::Tensor, marian::Tensor, marian::Tensor)
+  DISPATCH4(BalancedMoeNormalizeGateWithMask, marian::Tensor, marian::Tensor, marian::Tensor, const int)
+  DISPATCH5(BalancedMoeNormalizeGateWithMaskGrad, marian::Tensor, marian::Tensor, marian::Tensor, marian::Tensor, marian::Tensor)
+
 // clang-format on
 
 #ifdef CUDA_FOUND

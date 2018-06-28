@@ -69,6 +69,13 @@ Expr bdot(Expr a,
           bool transA = false,
           bool transB = false,
           float scalar = 1.f);
+Expr bdot(Expr a,
+          Expr b,
+          const std::vector<size_t>& indicesA,
+          const std::vector<size_t>& indicesB,
+          bool transA = false,
+          bool transB = false,
+          float scalar = 1.f);
 
 Expr affine(Expr a,
             Expr b,
@@ -102,6 +109,12 @@ Expr select(Expr a, int axis, const std::vector<size_t>& indices);
 /*********************************************************/
 
 Expr sum(Expr a, keywords::axis_k ax = 0);
+
+Expr max(Expr a);
+
+Expr top_k(Expr a, const size_t k);
+Expr top_k_inds(Expr a, const size_t k);
+Expr top_k_mask(Expr a, const size_t k);
 
 Expr softmax(Expr a, Expr mask = nullptr);
 
@@ -162,4 +175,11 @@ Expr max_pooling(Expr x,
                  int strideWidth = 1);
 
 Expr pooling_with_masking(Expr x, Expr mask, int width, bool isEven = false);
+
+Expr balanced_moe_slicer(Expr a, Expr b);
+Expr balanced_moe_slicer_with_mask(Expr a, Expr b, int m);
+Expr balanced_moe_stitcher(Expr a, Expr b, const size_t numTokens);
+Expr balanced_moe_stitcher_with_mask(Expr a, Expr b);
+Expr balanced_moe_normalize_gate(Expr a, Expr b, const size_t numTokens);
+Expr balanced_moe_normalize_gate_with_mask(Expr a, Expr b, const size_t numTokens);
 }

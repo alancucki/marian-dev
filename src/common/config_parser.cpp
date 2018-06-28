@@ -363,6 +363,16 @@ void ConfigParser::addOptionsModel(po::options_description& desc) {
      "Operation after transformer embedding layer: d = dropout, a = add, n = normalize")
     ("transformer-postprocess", po::value<std::string>()->default_value("dan"),
      "Operation after each transformer layer: d = dropout, a = add, n = normalize")
+    ("mixofexperts-layer-index", po::value<int>()->default_value(-1),
+     "MoE layer index in the decoder (1-based)")
+    ("mixofexperts-layer-type", po::value<std::string>()->default_value("balanced_moe"),
+     "MoE type: balanced_moe, large_attn")
+    ("mixofexperts-dim-hid", po::value<int>()->default_value(1024),
+     "Moe hidden layer size of each expert")
+    ("mixofexperts-num-experts", po::value<int>()->default_value(256),
+     "MoE number of experts")
+    ("mixofexperts-sel-experts", po::value<int>()->default_value(4),
+     "MoE number of experts applied to each sample")
 #ifdef CUDNN
     ("char-stride", po::value<int>()->default_value(5),
      "Width of max-pooling layer after convolution layer in char-s2s model")
@@ -847,6 +857,12 @@ void ConfigParser::parseOptions(int argc, char** argv, bool doValidate) {
   SET_OPTION("transformer-dim-ffn", int);
   SET_OPTION("transformer-ffn-depth", int);
   SET_OPTION("transformer-ffn-activation", std::string);
+
+  SET_OPTION("mixofexperts-layer-index", int);
+  SET_OPTION("mixofexperts-layer-type", std::string);
+  SET_OPTION("mixofexperts-dim-hid", int);
+  SET_OPTION("mixofexperts-num-experts", int);
+  SET_OPTION("mixofexperts-sel-experts", int);
 
 #ifdef CUDNN
   SET_OPTION("char-stride", int);

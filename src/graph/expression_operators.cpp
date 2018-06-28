@@ -51,6 +51,18 @@ Expr max(Expr a) {
   return Expression<MaxNodeOp>(a);
 }
 
+Expr top_k(Expr a, const size_t k) {
+  return Expression<TopKNodeOp>(a, k);
+}
+
+Expr top_k_inds(Expr a, const size_t k) {
+  return Expression<TopKIndsNodeOp>(a, k);
+}
+
+Expr top_k_mask(Expr a, const size_t k) {
+  return Expression<TopKMaskNodeOp>(a, k);
+}
+
 Expr softmax(Expr a, Expr mask) {
   return Expression<SoftmaxNodeOp>(a, mask);
 }
@@ -223,6 +235,16 @@ Expr dot(Expr a, Expr b, bool transA, bool transB, float scale) {
 
 Expr bdot(Expr a, Expr b, bool transA, bool transB, float scale) {
   return Expression<DotBatchedNodeOp>(a, b, transA, transB, scale);
+}
+
+Expr bdot(Expr a,
+          Expr b,
+          const std::vector<size_t>& indicesA,
+          const std::vector<size_t>& indicesB,
+          bool transA,
+          bool transB,
+          float scale) {
+  return Expression<DotBatchedNodeOp>(a, b, transA, transB, indicesA, indicesB, scale);
 }
 
 Expr affine(Expr a, Expr b, Expr bias, bool transA, bool transB, float scale) {
@@ -482,4 +504,30 @@ Expr pooling_with_masking(Expr x, Expr mask, int width, bool isEven) {
 }
 
 #endif
+
+/*********************************************************/
+
+Expr balanced_moe_slicer(Expr a, Expr b) {
+  return Expression<BalancedMoeSlicerOp>(a, b);
+}
+
+Expr balanced_moe_slicer_with_mask(Expr a, Expr b, int m) {
+  return Expression<BalancedMoeSlicerWithMaskOp>(a, b, m);
+}
+
+Expr balanced_moe_stitcher(Expr a, Expr b, const size_t numTokens) {
+  return Expression<BalancedMoeStitcherOp>(a, b, numTokens);
+}
+
+Expr balanced_moe_stitcher_with_mask(Expr a, Expr b) {
+  return Expression<BalancedMoeStitcherWithMaskOp>(a, b);
+}
+
+Expr balanced_moe_normalize_gate(Expr a, Expr b, const size_t numTokens) {
+  return Expression<BalancedMoeNormalizeGateOp>(a, b, numTokens);
+}
+
+Expr balanced_moe_normalize_gate_with_mask(Expr a, Expr b, const size_t numTokens) {
+  return Expression<BalancedMoeNormalizeGateWithMaskOp>(a, b, numTokens);
+}
 }

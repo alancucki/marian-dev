@@ -53,6 +53,8 @@ class ExpressionGraph;
  */
 template <class DataType>
 struct Chainable {
+  bool pauseForwarding{false};
+
   Chainable() {}
   virtual ~Chainable(){};
 

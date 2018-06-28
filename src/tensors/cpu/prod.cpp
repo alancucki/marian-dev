@@ -158,6 +158,18 @@ void ProdBatched(marian::Tensor C,
 #endif
 }
 
+void ProdBatched(marian::Tensor C,
+                 const marian::Tensor A,
+                 const marian::Tensor B,
+                 const std::vector<size_t>& indicesA,
+                 const std::vector<size_t>& indicesB,
+                 bool transA,
+                 bool transB,
+                 float beta,
+                 float scalar) {
+  ABORT("Not implemented!");
+}
+
 void ProdWithBias(marian::Tensor C,
                   const marian::Tensor A,
                   const marian::Tensor B,

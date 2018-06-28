@@ -404,26 +404,29 @@ void LogSoftmax(Tensor out, Tensor in) {
 }
 
 __global__ void gMax(float* out,
-                     const functional::Shape outShape,
+                     const functional::Shape inShape,
                      const float* in) {
-  int rows = outShape.elements() / outShape.back();
-  int cols = outShape.back();
+  int rows = inShape.elements() / inShape.back();
+  int cols = inShape.back();
 
   for(int bid = 0; bid < rows; bid += gridDim.x) {
     int j = bid + blockIdx.x;
     if(j < rows) {
-      float* so = out + j * cols;
       const float* sp = in + j * cols;
 
       extern __shared__ float _share[];
+      // int* maxInd = (float*)_share[blockDim.x];
 
-      float* _max = _share + blockDim.x;
+      float* _max = _share; // + blockDim.x;
       _max[threadIdx.x] = sp[threadIdx.x];
+      // maxInd[threadIdx.x] = threadIdx.x;
       for(int tid = 0; tid < cols; tid += blockDim.x) {
         int id = tid + threadIdx.x;
         if(id < cols) {
-          if(sp[id] > _max[threadIdx.x])
+          if(sp[id] > _max[threadIdx.x]) {
             _max[threadIdx.x] = sp[id];
+            // maxInd[threadIdx.x] = id;
+          }
         }
       }
       __syncthreads();
@@ -434,18 +437,19 @@ __global__ void gMax(float* out,
         if(threadIdx.x < (len >> 1)) {
           if(_max[threadIdx.x + skip] > _max[threadIdx.x]) {
             _max[threadIdx.x] = _max[threadIdx.x + skip];
+            // maxInd[threadIdx.x] = maxInd[threadIdx.x + skip];
           }
         }
         len = (len + 1) >> 1;
       }
       __syncthreads();
-      float out = _max[0];
+      out[j] = _max[0];
       __syncthreads();
     }
   }
 }
 
-void Max(float* out, Tensor in) {
+void Max(Tensor out, Tensor in) {
   cudaSetDevice(out->getDevice().no);
 
   size_t m = out->shape().elements() / out->shape().back();
@@ -453,10 +457,11 @@ void Max(float* out, Tensor in) {
 
   int blocks = std::min(MAX_BLOCKS, (int)m);
   int threads = std::min(MAX_THREADS, (int)k);
-  int shared = sizeof(float) * threads * 2;
+  // int shared = sizeof(float) * threads * 2;
+  int shared = sizeof(float) * threads + sizeof(int) * threads;
 
   gMax<<<blocks, threads, shared>>>(
-      out, out->shape(), in->data());
+      out->data(), in->shape(), in->data());
 }
 
 // blocks compute rows, thread compute columns within each row
@@ -464,27 +469,27 @@ void Max(float* out, Tensor in) {
 __global__ void gMaxGrad(float* grad,
                          const float* adj,
                          const float* val, // Assume val to be a 1-D array
+                         const float* in,
                          const int rows,
                          const int cols) {
   for(int bid = 0; bid < rows; bid += gridDim.x) {
     int j = bid + blockIdx.x;
     if(j < rows) {
-      const float* so = grad + j * cols;
+      float* so = grad + j * cols;
       const float* sp = in + j * cols;
 
       for(int tid = 0; tid < cols; tid += blockDim.x) {
         int id = tid + threadIdx.x;
         if(id < cols) {
-          so[id] = (sp[id] == maxVal[j] ? adj[j] * val[j] else 0.0);
+          so[id] = (sp[id] == val[j] ? adj[j] * val[j] : 0.0);
         }
       }
-      // TODO Unnecessary?
       __syncthreads();
     }
   }
 }
 
-void MaxGrad(Tensor grad, Tensor adj, Tensor val) {
+void MaxGrad(Tensor grad, Tensor adj, Tensor val, Tensor in) {
   cudaSetDevice(adj->getDevice().no);
 
   // grad is m-by-k, val is 1-by-k matrix
@@ -493,8 +498,256 @@ void MaxGrad(Tensor grad, Tensor adj, Tensor val) {
 
   int blocks = std::min(MAX_BLOCKS, m);
   int threads = std::min(MAX_THREADS, k);
-  gMaxGrad<<<blocks, threads, shared>>>(
-      grad->data(), adj->data(), val->data(), m, k);
+  gMaxGrad<<<blocks, threads>>>(
+      grad->data(), adj->data(), val->data(), in->data(), m, k);
+}
+
+__device__ inline bool isIn(const int32_t val, const int32_t* arr, const int32_t len) {
+  for(auto ptr = arr; ptr < arr + len; ++ptr) {
+    if(*ptr == val)
+      return true;
+  }
+  return false;
+}
+
+__global__ void gTopK(float* out,
+                      const int32_t numK,
+                      const functional::Shape inShape,
+                      const float* in,
+                      const bool returnInds = false) {
+  int rows = inShape.elements() / inShape.back();
+  int cols = inShape.back();
+
+  for(int k = 0; k < numK; ++k) {
+
+    for(int bid = 0; bid < rows; bid += gridDim.x) {
+      int j = bid + blockIdx.x;
+      if(j < rows) {
+        const float* sp = in + j * cols;
+
+        extern __shared__ float _share[];
+        int32_t* maxInd = (int32_t*)&_share[blockDim.x];
+        int32_t* outInds = (int32_t*)&_share[blockDim.x * 2];
+
+        // TODO Why was it shifted by blockDim.x ?
+        float* _max = _share; // + blockDim.x;
+        _max[threadIdx.x] = (isIn((int32_t)threadIdx.x, outInds, k) ? -1e8 : sp[threadIdx.x]);
+        maxInd[threadIdx.x] = threadIdx.x;
+        for(int tid = 0; tid < cols; tid += blockDim.x) {
+          int id = tid + threadIdx.x;
+          if(id < cols) {
+            if(!isIn((int32_t)id, outInds, k) && sp[id] > _max[threadIdx.x]) {
+              _max[threadIdx.x] = sp[id];
+              maxInd[threadIdx.x] = id;
+            }
+          }
+        }
+        __syncthreads();
+        int len = blockDim.x;
+        while(len != 1) {
+          __syncthreads();
+          int skip = (len + 1) >> 1;
+          if(threadIdx.x < (len >> 1)) {
+            if(_max[threadIdx.x + skip] > _max[threadIdx.x]) {
+              _max[threadIdx.x] = _max[threadIdx.x + skip];
+              maxInd[threadIdx.x] = maxInd[threadIdx.x + skip];
+            }
+          }
+          len = (len + 1) >> 1;
+        }
+        __syncthreads();
+        out[k + j * numK] = (returnInds ? (float)maxInd[0] : _max[0]);
+        outInds[k] = maxInd[0];
+        __syncthreads();
+      }
+    }
+  }
+}
+
+__global__ void gTopKMask(float* out,
+                          const int32_t numK,
+                          const functional::Shape inShape,
+                          const float* in) {
+  int rows = inShape.elements() / inShape.back();
+  int cols = inShape.back();
+
+  for(int bid = 0; bid < rows; bid += gridDim.x) {
+    int j = bid + blockIdx.x;
+    if(j < rows) {
+
+      // Zero the output row
+      for(int tid = 0; tid < cols; tid += blockDim.x) {
+        int id = tid + threadIdx.x;
+        if(id < cols)
+          out[j * cols + id] = -1.0;
+      }
+
+      for(int k = 0; k < numK; ++k) {
+        const float* sp = in + j * cols;
+
+        extern __shared__ float _share[];
+        int32_t* maxInd = (int32_t*)&_share[blockDim.x];
+        int32_t* outInds = (int32_t*)&_share[blockDim.x * 2];
+
+        // TODO Why was it shifted by blockDim.x ?
+        float* _max = _share; // + blockDim.x;
+        _max[threadIdx.x] = (isIn((int32_t)threadIdx.x, outInds, k) ? -1e8 : sp[threadIdx.x]);
+        maxInd[threadIdx.x] = threadIdx.x;
+        for(int tid = 0; tid < cols; tid += blockDim.x) {
+          int id = tid + threadIdx.x;
+          if(id < cols) {
+            if(!isIn((int32_t)id, outInds, k) && sp[id] > _max[threadIdx.x]) {
+              _max[threadIdx.x] = sp[id];
+              maxInd[threadIdx.x] = id;
+            }
+          }
+        }
+        __syncthreads();
+        int len = blockDim.x;
+        while(len != 1) {
+          __syncthreads();
+          int skip = (len + 1) >> 1;
+          if(threadIdx.x < (len >> 1)) {
+            if(_max[threadIdx.x + skip] > _max[threadIdx.x]) {
+              _max[threadIdx.x] = _max[threadIdx.x + skip];
+              maxInd[threadIdx.x] = maxInd[threadIdx.x + skip];
+            }
+          }
+          len = (len + 1) >> 1;
+        }
+        __syncthreads();
+        out[maxInd[0] + j * cols] = (float)k;
+        outInds[k] = maxInd[0];
+        __syncthreads();
+      }
+    }
+  }
+}
+
+void TopK(Tensor out, const size_t k, Tensor in) {
+  cudaSetDevice(out->getDevice().no);
+
+  size_t m = out->shape().elements() / out->shape().back();
+  size_t n = out->shape().back();
+
+  int blocks = std::min(MAX_BLOCKS, (int)m);
+  int threads = std::min(MAX_THREADS, (int)n);
+  // int shared = sizeof(float) * threads * 2;
+  int shared = (sizeof(float) * threads + sizeof(int32_t) * (threads + k)) * 2;
+
+  gTopK<<<blocks, threads, shared>>>(
+      out->data(), k, in->shape(), in->data(), false);
+}
+
+void TopKInds(Tensor out, const size_t k, Tensor in) {
+  cudaSetDevice(out->getDevice().no);
+
+  size_t m = out->shape().elements() / out->shape().back();
+  size_t n = out->shape().back();
+
+  int blocks = std::min(MAX_BLOCKS, (int)m);
+  int threads = std::min(MAX_THREADS, (int)n);
+  // int shared = sizeof(float) * threads * 2;
+  int shared = (sizeof(float) * threads + sizeof(int32_t) * (threads + k)) * 2;
+
+  gTopK<<<blocks, threads, shared>>>(
+      out->data(), k, in->shape(), in->data(), true);
+}
+
+void TopKMask(Tensor out, const size_t k, Tensor in) {
+  cudaSetDevice(out->getDevice().no);
+
+  size_t m = out->shape().elements() / out->shape().back();
+  size_t n = out->shape().back();
+
+  int blocks = std::min(MAX_BLOCKS, (int)m);
+  int threads = std::min(MAX_THREADS, (int)n);
+  int shared = (sizeof(float) * threads + sizeof(int32_t) * (threads + k)) * 2;
+
+  gTopKMask<<<blocks, threads, shared>>>(
+      out->data(), k, in->shape(), in->data());
+}
+
+// blocks compute rows, threads compute columns within each row
+// softmax is applied to each row separately
+__global__ void gTopKGrad(float* grad,
+                          const float* adj,
+                          const float* val, // num x k
+                          const float* in,
+                          const int rows,
+                          const int cols,
+                          const size_t numK) {
+  for(int bid = 0; bid < rows; bid += gridDim.x) {
+    int j = bid + blockIdx.x;
+    if(j < rows) {
+      float* so = grad + j * cols;
+      const float* sp = in + j * cols;
+
+      for(int tid = 0; tid < cols; tid += blockDim.x) {
+        int id = tid + threadIdx.x;
+        if(id < cols) {
+          so[id] = 0.0;
+          for(int k = numK - 1; k >= 0; --k) {
+            if(sp[id] >= val[j * numK + k])
+              so[id] += adj[j * numK + k] * val[j * numK + k];
+            else
+              break;
+          }
+        }
+        __syncthreads();
+      }
+    }
+    __syncthreads();
+  }
+}
+
+void TopKGrad(Tensor grad, Tensor adj, Tensor val, Tensor in) {
+  cudaSetDevice(adj->getDevice().no);
+
+  // grad is m-by-k, val is 1-by-k matrix
+  int rows = grad->shape().elements() / grad->shape().back();
+  int cols = grad->shape().back();
+  int k = val->shape()[-1];
+
+  int blocks = std::min(MAX_BLOCKS, rows);
+  int threads = std::min(MAX_THREADS, cols);
+  gTopKGrad<<<blocks, threads>>>(
+      grad->data(), adj->data(), val->data(), in->data(), rows, cols, k);
+}
+
+// blocks compute rows, threads compute columns within each row
+// softmax is applied to each row separately
+__global__ void gTopKIndsGrad(float* grad,
+                              const int rows,
+                              const int cols) {
+  for(int bid = 0; bid < rows; bid += gridDim.x) {
+    int j = bid + blockIdx.x;
+    if(j < rows) {
+      float* so = grad + j * cols;
+
+      for(int tid = 0; tid < cols; tid += blockDim.x) {
+        int id = tid + threadIdx.x;
+        if(id < cols) {
+          // so[id] = 1.0;
+          }
+        __syncthreads();
+      }
+    }
+    __syncthreads();
+  }
+}
+
+void TopKIndsGrad(Tensor grad, Tensor adj) {
+  cudaSetDevice(grad->getDevice().no);
+
+  // grad is m-by-k, val is 1-by-k matrix
+  int rows = grad->shape().elements() / grad->shape().back();
+  int cols = grad->shape().back();
+
+  int blocks = std::min(MAX_BLOCKS, rows);
+  int threads = std::min(MAX_THREADS, cols);
+  gTopKIndsGrad<<<blocks, threads>>>(
+      grad->data(), rows, cols);
 }
 
 ///////////////////////////////////////////////////////
@@ -2222,5 +2475,737 @@ void PoolingWithMaskingBackward(Tensor adj,
                                            width,
                                            lastWidth);
 }
+
+__global__ void gBalancedMoeSlicerWithMask(float* out,
+                                           const int numTokens,
+                                           const int dim,
+                                           const int exp,
+                                           const int m,
+                                           const float* in,
+                                           const float* mask) {
+  // out (EXPERTS, M, DIM)
+  for(int bid = 0; bid < exp; bid += gridDim.x) {
+    int e = bid + blockIdx.x;
+    if(e < exp) {
+
+      // Zero output matrix
+      for(int m_ = 0; m_ < m; ++m_) {
+        for(int tid = 0; tid < dim; tid += blockDim.x) {
+          out[(e * m + m_) * + (tid % dim)] = 0.0f;
+        }
+      }
+      __syncthreads();
+
+      for(int t = 0; t < numTokens; ++t) {
+        int m_ = (int)mask[t * exp + e];
+        if(m_ >= 0) {
+          const float* src = &in[t * dim];
+          float* tgt = &out[(e * m + m_) * dim];
+          for(int tid = 0; tid < dim; tid += blockDim.x) {
+            int d = tid + threadIdx.x;
+            if(d < dim) {
+              tgt[d] = src[d];
+            }
+          }
+        }
+      }
+    }
+    __syncthreads();
+  }
 }
+
+void BalancedMoeSlicerWithMask(Tensor out, Tensor in, Tensor mask) {
+  cudaSetDevice(out->getDevice().no);
+
+  size_t numTokens = in->shape().elements() / in->shape().back();
+  size_t dim = in->shape().back();
+  size_t exp = out->shape()[-3];
+  size_t m = out->shape()[-2];
+
+  int blocks = std::min(MAX_BLOCKS, (int)exp);
+  int threads = std::min(MAX_THREADS, (int)dim);
+
+  gBalancedMoeSlicerWithMask<<<blocks, threads>>>(
+      out->data(), numTokens, dim, exp, m, in->data(), mask->data());
+}
+
+__global__ void gBalancedMoeSlicerWithMaskGrad(float* grad,
+                                               const int numTokens,
+                                               const int dim,
+                                               const int exp,
+                                               const int m,
+                                               const float* mask,
+                                               const float* adj) {
+  // grad (TOKENS, DIM)
+  for(int bid = 0; bid < exp; bid += gridDim.x) {
+    int e = bid + blockIdx.x;
+    if(e < exp) {
+      for(int t = 0; t < numTokens; ++t) {
+        int m_ = (int)mask[t * exp + e];
+        if(m_ >= 0) {
+
+          float* tgt = &grad[t * dim];
+          const float* adjSrc = &adj[(e * m + m_) * dim];
+
+          for(int tid = 0; tid < dim; tid += blockDim.x) {
+            int d = tid + threadIdx.x;
+            if(d < dim) {
+              atomicAdd(tgt + d, adjSrc[d]);
+            }
+          }
+
+        }
+      }
+    }
+    __syncthreads();
+  }
+}
+
+void BalancedMoeSlicerWithMaskGrad(Tensor grad, Tensor val, Tensor mask, Tensor adj) {
+  cudaSetDevice(grad->getDevice().no);
+
+  size_t numTokens = grad->shape().elements() / grad->shape().back();
+  size_t dim = grad->shape().back();
+  size_t exp = adj->shape()[-3];
+  size_t m = adj->shape()[-2];
+
+  int blocks = std::min(MAX_BLOCKS, (int)exp);
+  int threads = std::min(MAX_THREADS, (int)dim);
+
+  gBalancedMoeSlicerWithMaskGrad<<<blocks, threads>>>(
+      grad->data(), numTokens, dim, exp, m, mask->data(), adj->data());
+}
+
+__global__ void gBalancedMoeSlicer(float* out,
+                                   const int exp,
+                                   const int m,
+                                   const int dim,
+                                   const float* in,
+                                   const float* inds) {
+  for(int bid = 0; bid < m; bid += gridDim.x) {
+    int m_ = bid + blockIdx.x;
+    if(m_ >= m)
+      continue;
+
+    for(int tid = 0; tid < exp; tid += blockDim.x) {
+      int exp_ = tid + threadIdx.x;
+      if(exp_ >= exp)
+        continue;
+
+      int t_ = (int)inds[exp_ * m + m_];
+      const float* src = &in[t_ * dim];  // in[t,:]
+      float* tgt = &out[(exp_ * m + m_) * dim]; // out[e,m,:]
+      // cublasScopy(cublasHandle, dim, src, 0, tgt, 0);
+      // auto cublasHandle = std::static_pointer_cast<gpu::Backend>(out->getBackend())
+      //                         ->getCublasHandle();
+      for (int i = 0; i < dim; ++i)
+        tgt[i] = src[i];
+    }
+    __syncthreads();
+  }
+}
+
+void BalancedMoeSlicer(Tensor out, Tensor in, Tensor inds) {
+  cudaSetDevice(out->getDevice().no);
+
+  size_t exp = inds->shape().elements() / inds->shape().back();
+  size_t m = inds->shape().back();
+
+  int blocks = std::min(MAX_BLOCKS, (int)m);
+  int threads = std::min(MAX_THREADS, (int)exp);
+
+  int _exp = out->shape()[-3];
+  int _m = out->shape()[-2];
+  int _dim = out->shape()[-1];
+
+  gBalancedMoeSlicer<<<blocks, threads>>>(
+      out->data(), _exp, _m, _dim, in->data(), inds->data());
+}
+
+__global__ void gBalancedMoeSlicerGrad(float* grad,
+                                       const int exp,
+                                       const int m,
+                                       const int dim,
+                                       const float* val, // XXX unused
+                                       const float* inds,
+                                       const float* adj) {
+  // TODO Zero the grad matrix?
+  for(int pos = 0; pos < m * exp; ++pos) {
+
+    int32_t t = (int32_t)inds[pos];
+    if(t % gridDim.x == blockIdx.x) {
+
+      float* tgt = &grad[t * dim];  // in[t,:]
+      const float* adjSrc = &adj[pos * dim]; // out[e,m,:]
+
+      for(int tid = 0; tid < dim; tid += blockDim.x) {
+        int dim_ = tid + threadIdx.x;
+        if(dim_ < dim)
+          tgt[dim_] += adjSrc[dim_];
+      }
+    }
+    __syncthreads();
+    // cublasScopy(cublasHandle, dim, src, 0, tgt, 0);
+    // auto cublasHandle = std::static_pointer_cast<gpu::Backend>(out->getBackend())
+    //                         ->getCublasHandle();
+  }
+}
+
+void BalancedMoeSlicerGrad(Tensor grad, Tensor val, Tensor inds, Tensor adj) {
+  cudaSetDevice(grad->getDevice().no);
+
+  size_t exp = inds->shape().elements() / inds->shape().back();
+  size_t m = inds->shape().back();
+
+  int blocks = 1; // XXX std::min(MAX_BLOCKS, (int)m);
+  int threads = 1; // XXX std::min(MAX_THREADS, (int)exp);
+
+  int _exp = adj->shape()[-3];
+  int _m = adj->shape()[-2];
+  int _dim = adj->shape()[-1];
+
+  gBalancedMoeSlicerGrad<<<blocks, threads>>>(
+      grad->data(), _exp, _m, _dim, val->data(), inds->data(), adj->data());
+}
+
+__global__ void gBalancedMoeStitcher(float* out,
+                                     const int exp,
+                                     const int m,
+                                     const int dim,
+                                     const float* in,
+                                     const float* inds,
+                                     const size_t numTokens) {
+  // out (TOKENS, DIM)
+  // TODO Zero the output matrix?
+
+  for(int pos = 0; pos < m * exp; ++pos) {
+
+    int32_t t = (int32_t)inds[pos];
+    if(t % gridDim.x == blockIdx.x) {
+
+      const float* src = &in[pos * dim];
+      float* tgt = &out[t * dim];
+
+      for(int tid = 0; tid < dim; tid += blockDim.x) {
+        int dim_ = tid + threadIdx.x;
+        if(dim_ < dim)
+          tgt[dim_] += src[dim_];
+      }
+    }
+    __syncthreads();
+    // cublasScopy(cublasHandle, dim, src, 0, tgt, 0);
+    // auto cublasHandle = std::static_pointer_cast<gpu::Backend>(out->getBackend())
+    //                         ->getCublasHandle();
+  }
+}
+
+void BalancedMoeStitcher(
+    Tensor out, Tensor in, Tensor inds, const size_t numTokens) {
+  cudaSetDevice(out->getDevice().no);
+
+  size_t exp = inds->shape().elements() / inds->shape().back();
+  size_t m = inds->shape().back();
+
+  int blocks = std::min(MAX_BLOCKS, (int)m);
+  int threads = std::min(MAX_THREADS, (int)exp);
+
+  int _exp = in->shape()[-3];
+  int _m = in->shape()[-2];
+  int _dim = in->shape()[-1];
+
+  gBalancedMoeStitcher<<<blocks, threads>>>(
+      out->data(), _exp, _m, _dim, in->data(), inds->data(), numTokens);
+}
+
+__global__ void gBalancedMoeStitcherWithMask(float* out,
+                                             const int exp,
+                                             const int m,
+                                             const int dim,
+                                             const int numTokens,
+                                             const float* in,
+                                             const float* mask) {
+  // out (TOKENS, DIM)
+  for(int bid = 0; bid < numTokens; bid += gridDim.x) {
+    int t = bid + blockIdx.x;
+    if(t < numTokens) {
+
+      // Zero output matrix
+      for(int tid = 0; tid < dim; tid += blockDim.x) {
+        out[t * dim + (tid % dim)] = 0.0f;
+      }
+      __syncthreads();
+
+      for(int tid = 0; tid < exp; tid += blockDim.x) {
+        int e = tid + threadIdx.x;
+        if(e < exp) {
+          int m_ = (int)mask[t * exp + e];
+          if(m_ >= 0) {
+            const float* src = &in[(e * m + m_) * dim];
+            float* tgt = &out[t * dim];
+            for(int d = 0; d < dim; ++d)
+              atomicAdd(out + t * dim + d, src[d]);
+          }
+        }
+      }
+
+    }
+  }
+}
+
+void BalancedMoeStitcherWithMask(Tensor out, Tensor in, Tensor mask) {
+  cudaSetDevice(out->getDevice().no);
+
+  size_t exp = in->shape()[-3];
+  size_t m = in->shape()[-2];
+  size_t dim = in->shape()[-1];
+  size_t numTokens = out->shape().elements() / out->shape().back();
+
+  int blocks = std::min(MAX_BLOCKS, (int)numTokens);
+  int threads = std::min(MAX_THREADS, (int)exp);
+
+  gBalancedMoeStitcherWithMask<<<blocks, threads>>>(
+      out->data(), exp, m, dim, numTokens, in->data(), mask->data());
+}
+
+__global__ void gBalancedMoeStitcherWithMaskGrad(float* grad,
+                                                 const int exp,
+                                                 const int m,
+                                                 const int dim,
+                                                 const int numTokens,
+                                                 const float* val,
+                                                 const float* mask,
+                                                 const float* adj) {
+  // grad (TOKENS, EXPERTS)
+  for(int bid = 0; bid < numTokens; bid += gridDim.x) {
+    int t = bid + blockIdx.x;
+    if(t < numTokens) {
+
+      for(int tid = 0; tid < exp; tid += blockDim.x) {
+        int e = tid + threadIdx.x;
+        if(e < exp) {
+          int m_ = (int)mask[t * exp + e];
+          if(m_ >= 0) {
+            const float* src = &adj[t * dim];
+            float* tgt = &grad[(e * m + m_) * dim];
+
+            for(int d = 0; d < dim; ++d)
+              atomicAdd(tgt + d, src[d]);
+          }
+        }
+      }
+
+    }
+  }
+}
+
+void BalancedMoeStitcherWithMaskGrad(
+    Tensor grad, Tensor val, Tensor mask, Tensor adj) {
+  cudaSetDevice(grad->getDevice().no);
+
+  size_t exp = val->shape()[-3];
+  size_t m = val->shape()[-2];
+  size_t dim = val->shape()[-1];
+  size_t numTokens = mask->shape().elements() / mask->shape().back();
+
+  int blocks = std::min(MAX_BLOCKS, (int)numTokens);
+  int threads = std::min(MAX_THREADS, (int)exp);
+
+  gBalancedMoeStitcherWithMaskGrad<<<blocks, threads>>>(
+      grad->data(), exp, m, dim, numTokens, val->data(), mask->data(), adj->data());
+}
+
+__global__ void gBalancedMoeStitcherGrad(float* grad,
+                                         const int exp,
+                                         const int m,
+                                         const int dim,
+                                         const float* val,
+                                         const float* inds,
+                                         const float* adj) {
+  for(int bid = 0; bid < m; bid += gridDim.x) {
+    int m_ = bid + blockIdx.x;
+    if(m_ >= m)
+      continue;
+
+    for(int tid = 0; tid < exp; tid += blockDim.x) {
+      int exp_ = tid + threadIdx.x;
+      if(exp_ >= exp)
+        continue;
+
+      size_t t_ = (size_t)inds[exp_ * m + m_];
+      const float* src = &adj[t_ * dim];  // in[t,:]
+      float* tgt = &grad[(exp_ * m + m_) * dim]; // out[e,m,:]
+      for (int i = 0; i < dim; ++i)
+        tgt[i] += src[i];
+    }
+    __syncthreads();
+  }
+}
+
+void BalancedMoeStitcherGrad(
+    Tensor grad, Tensor val, Tensor inds, Tensor adj) {
+  cudaSetDevice(grad->getDevice().no);
+
+  size_t exp = inds->shape().elements() / inds->shape().back();
+  size_t m = inds->shape().back();
+
+  int blocks = std::min(MAX_BLOCKS, (int)m);
+  int threads = std::min(MAX_THREADS, (int)exp);
+
+  int _exp = grad->shape()[-3];
+  int _m = grad->shape()[-2];
+  int _dim = grad->shape()[-1];
+
+  gBalancedMoeStitcherGrad<<<blocks, threads>>>(
+      grad->data(), _exp, _m, _dim, val->data(), inds->data(), adj->data());
+}
+
+__global__ void gBalancedMoeNormalizeGateWithMask(float *out,
+                                                  const int exp,
+                                                  const int m,
+                                                  const float* in,
+                                                  const float* mask,
+                                                  const int numTokens) {
+  // in (NUM_TOKENS, EXPERTS)
+  // mask (NUM_TOKENS, EXPERTS)
+  // out (EXPERTS, M)
+
+  // Initialize shared memory
+  extern __shared__ float shared[];
+  float* norm = shared;
+  for(int bid = 0; bid < numTokens; bid += gridDim.x) {
+    int t = bid + blockIdx.x;
+    if(t < numTokens) {
+
+      // Accumulate normalizing constants
+      norm[t] = 0.0;
+      __syncthreads();
+      for(int tid = 0; tid < exp; tid += blockDim.x) {
+        int e = tid + threadIdx.x;
+        if(e < exp) {
+          if(mask[t * exp + e] > -0.5f) {
+            atomicAdd(norm + t, in[t * exp + e]);
+          }
+        }
+      }
+      __syncthreads();
+
+      for(int tid = 0; tid < exp; tid += blockDim.x) {
+        int e = tid + threadIdx.x;
+        if(e < exp) {
+          if(mask[t * exp + e] > -0.5f) {
+            int m_ = (int)mask[t * exp + e];
+            out[e * m + m_] = in[t * exp + e] / norm[t];
+          }
+        }
+      }
+
+    }
+  }
+}
+
+void BalancedMoeNormalizeGateWithMask(Tensor out, Tensor in, Tensor mask, const int UNUSED) {
+  cudaSetDevice(out->getDevice().no);
+
+  size_t m = out->shape().back();
+  size_t exp = mask->shape().back();
+  size_t numTokens = mask->shape().elements() / mask->shape().back();
+
+  int blocks = std::min(MAX_BLOCKS, (int)numTokens);
+  int threads = std::min(MAX_THREADS, (int)m);
+  int shared = sizeof(float) * numTokens * 2;
+
+  gBalancedMoeNormalizeGateWithMask<<<blocks, threads, shared>>>(
+      out->data(), exp, m, in->data(), mask->data(), numTokens);
+}
+
+__global__ void gBalancedMoeNormalizeGateWithMaskGrad(float* grad,
+                                                      const int exp,
+                                                      const int m,
+                                                      const int numTokens,
+                                                      const float* in,
+                                                      const float* val,
+                                                      const float* mask,
+                                                      const float* adj) {
+  // grad (TOKENS, EXPERTS)
+
+  // Initialize shared memory
+  extern __shared__ float shared[];
+  float* norm = shared;
+  for(int bid = 0; bid < numTokens; bid += gridDim.x) {
+    int t = bid + blockIdx.x;
+    if(t < numTokens) {
+
+      // Accumulate normalizing constants
+      norm[t] = 0.0;
+      __syncthreads();
+      for(int tid = 0; tid < exp; tid += blockDim.x) {
+        int e = tid + threadIdx.x;
+        if(e < exp) {
+          if(mask[t * exp + e] > -0.5f) {
+            atomicAdd(norm + t, in[t * exp + e]);
+          }
+        }
+      }
+      __syncthreads();
+
+      // Compute the gradients
+      for(int tid = 0; tid < exp; tid += blockDim.x) {
+        int e = tid + threadIdx.x;
+        if(e < exp) {
+          if (mask[t * exp + e] > -0.5f) {
+            int m_ = (int)mask[t * exp + e];
+            for(int egrad = 0; egrad < exp; ++egrad) {
+              float partial = ((float)(e == egrad) - val[e * m + m_]) / norm[t];
+              float adj_ = adj[e * m + m_];
+              float flag = ((float)(mask[t * exp + egrad] > -0.5f));
+              atomicAdd(grad + (t * exp + egrad), flag * adj_ * partial);
+            }
+          }
+        }
+      } // finished computing gradients
+
+    }
+  }
+}
+
+void BalancedMoeNormalizeGateWithMaskGrad(
+    Tensor grad, Tensor in, Tensor val, Tensor mask, Tensor adj) {
+  cudaSetDevice(grad->getDevice().no);
+
+  size_t m = adj->shape().back();
+  size_t exp = mask->shape().back();
+  size_t numTokens = mask->shape().elements() / mask->shape().back();
+
+  int blocks = std::min(MAX_BLOCKS, (int)numTokens);
+  int threads = std::min(MAX_THREADS, (int)exp);
+  int shared = sizeof(float) * numTokens * 2;
+
+  gBalancedMoeNormalizeGateWithMaskGrad<<<blocks, threads, shared>>>(
+      grad->data(), exp, m, numTokens, in->data(), val->data(), mask->data(), adj->data());
+}
+
+/**************************************************/
+
+__global__ void gBalancedMoeNormalizeGate(float *out,
+                                          const int exp,
+                                          const int m,
+                                          const float* in,
+                                          const float* inds,
+                                          const int numTokens) {
+  // in (NUM_TOKENS, EXPERTS)
+  // inds (EXPERTS, M)
+  // out (EXPERTS, M)
+
+  // Initialize shared memory
+  extern __shared__ float shared[];
+  float* norm = shared;
+  for(int btid = 0; btid < numTokens; btid += (gridDim.x * blockDim.x)) {
+    int pos = btid + (blockIdx.x * blockDim.x + threadIdx.x);
+    if(pos < numTokens)
+      norm[pos] = 0.0;
+  }
+  __syncthreads();
+
+  if(blockIdx.x == 0 && threadIdx.x == 0) {
+    printf("NUM TOKENS: %d\n", numTokens);
+    for(int i = 0; i < numTokens; ++i)
+      printf("%f ", norm[i]);
+    printf("\n");
+  }
+  __syncthreads();
+
+  // Go over `inds` and aggregate normalizations in shared mem
+
+  // `inds` are guaranteed to be distinct in each row
+  // To avoid race conditions, we will process each row with all blocks/threads,
+  // along the `m` dimension
+  for(int exp_ = 0; exp_ < exp; ++exp_) {
+    for(int btid = 0; btid < m; btid += (gridDim.x * blockDim.x)) {
+      int m_ = btid + (blockIdx.x * blockDim.x + threadIdx.x);
+      if(m_ < m) {
+        int pos = exp_ * m + m_;
+        int t = (int)inds[pos];
+        norm[t] += in[t * exp + exp_];
+      }
+    }
+    __syncthreads();
+  }
+
+  if(blockIdx.x == 0 && threadIdx.x == 0) {
+    for(int i = 0; i < numTokens; ++i)
+      printf("%f ", norm[i]);
+    printf("\n");
+  }
+  __syncthreads();
+
+  // Copy and normalize in to out
+  for(int bid = 0; bid < exp; bid += gridDim.x) {
+    int exp_ = bid + blockIdx.x;
+    if (exp_ < exp) {
+      for(int tid = 0; tid < m; tid += blockDim.x) {
+        int m_ = tid + threadIdx.x;
+        if(m_ < m) {
+          int pos = exp_ * m + m_;
+          int t = (int)inds[pos];
+          out[pos] = (fabs(norm[t]) < 1e-10f ? 0.0f : in[t * exp + exp_] / norm[t]);
+          printf("t:%d (%d %d)\t%f --> %f (norm %f)\n", t, exp_, m_, in[t*exp+exp_], out[pos], norm[t]);
+        }
+      }
+    }
+    __syncthreads();
+  }
+}
+
+void BalancedMoeNormalizeGate(Tensor out, Tensor in, Tensor inds, const int numTokens) {
+  cudaSetDevice(out->getDevice().no);
+
+  size_t exp = inds->shape().elements() / inds->shape().back();
+  size_t m = inds->shape().back();
+
+  int blocks = 1; // XXX XXX XXX std::min(MAX_BLOCKS, (int)exp);
+  int threads = std::min(MAX_THREADS, (int)m);
+  int shared = sizeof(float) * numTokens * 2;
+
+  gBalancedMoeNormalizeGate<<<blocks, threads, shared>>>(
+      out->data(), exp, m, in->data(), inds->data(), numTokens);
+}
+
+__global__ void gBalancedMoeNormalizeGateGrad(float* grad,
+                                              const int exp,
+                                              const int m,
+                                              const int numTokens,
+                                              const float* in,
+                                              const float* val,
+                                              const float* inds,
+                                              const float* adj) {
+
+  // grad (TOKENS, EXPERTS)
+
+  // 1. Initialize shared memory
+  // 2. Set `grad` to +infty
+  // 3. Walk over `inds` and set `grad` to 0.0 for participating fields
+  // 4. Walk over `inds` and compute partial derivatives
+  //   - assume the whole column of `in` (and thus `grad`) participates in normalization
+  //   - so update a whole column of `grad`
+  //   - not participating fields are easily distinguishable by being +infty
+  // 5. Zero +infty fields of `grad`
+
+  // Initialize shared memory
+  extern __shared__ float shared[];
+  float* norm = shared;
+  for(int btid = 0; btid < numTokens; btid += (gridDim.x * blockDim.x)) {
+    int pos = btid + (blockIdx.x * blockDim.x + threadIdx.x);
+    if(pos < numTokens)
+      norm[pos] = 0.0;
+  }
+  __syncthreads();
+
+  // 1. a) compute normalization vector
+  for(int exp_ = 0; exp_ < exp; ++exp_) {
+    for(int btid = 0; btid < m; btid += (gridDim.x * blockDim.x)) {
+      int m_ = btid + (blockIdx.x * blockDim.x + threadIdx.x);
+      if(m_ < m) {
+        int pos = exp_ * m + m_;
+        int t = (int)inds[pos];
+        norm[t] += in[t * exp + exp_];
+      }
+    }
+    __syncthreads();
+  }
+
+  if(blockIdx.x == 0 && threadIdx.x == 0) {
+    printf("NUM TOKENS: %d\n", numTokens);
+    for(int i = 0; i < numTokens; ++i)
+      printf("%f ", norm[i]);
+    printf("\n");
+  }
+  __syncthreads();
+
+  // 2. Set `grad` to +infty
+  const float infty = 1e20;
+  for(int btid = 0; btid < exp * numTokens; btid += (gridDim.x * blockDim.x)) {
+    int pos = btid + (blockIdx.x * blockDim.x + threadIdx.x);
+    if(pos < exp * numTokens)
+      grad[pos] = infty;
+  }
+  __syncthreads();
+
+  // 3. Walk over `inds` and set `grad` to 0.0 for participating fields
+  for(int exp_ = 0; exp_ < exp; ++exp_) {
+    for(int btid = 0; btid < m; btid += (gridDim.x * blockDim.x)) {
+      int m_ = btid + (blockIdx.x * blockDim.x + threadIdx.x);
+      if(m_ < m) {
+        int pos = exp_ * m + m_;
+        int t = (int)inds[pos];
+        grad[t * exp + exp_] = 0.0f;
+      }
+    }
+    __syncthreads();
+  }
+
+  printf("ADJ\n");
+  for(int exp_ = 0; exp_ < exp; ++exp_) {
+    for(int btid = 0; btid < m; btid += (gridDim.x * blockDim.x)) {
+      int m_ = btid + (blockIdx.x * blockDim.x + threadIdx.x);
+      if(m_ < m) {
+        printf("%f ", adj[exp_*m+m_]);
+      }
+    }
+    printf("\n");
+  }
+
+  // 4. Walk over `inds` and compute partial derivatives
+  //   - assume the whole column of `in` (and thus `grad`) participates in normalization
+  //   - so update a whole column of `grad`
+  //   - not participating fields are easily distinguishable by being +infty
+  for(int exp_ = 0; exp_ < exp; ++exp_) {
+    for(int btid = 0; btid < m; btid += (gridDim.x * blockDim.x)) {
+      int m_ = btid + (blockIdx.x * blockDim.x + threadIdx.x);
+      if(m_ < m) {
+        int pos = exp_ * m + m_;
+        int t = (int)inds[pos];
+
+        for(int grad_exp_ = 0; grad_exp_ < exp; ++grad_exp_) {
+          if(fabs(norm[t]) > 1e-10) { // norm[t] != 0.0
+            float partial;
+            partial = (grad_exp_ != exp_) ? - val[pos] / norm[t] : (1.0f - val[pos]) / norm[t];
+            // XXX Watch out for race conditions
+            grad[t * exp + grad_exp_] += adj[pos] * partial;
+          }
+        }
+
+      }
+    }
+    __syncthreads();
+  }
+
+  // 5. Zero +infty fields of `grad`
+  for(int btid = 0; btid < exp * numTokens; btid += (gridDim.x * blockDim.x)) {
+    int pos = btid + (blockIdx.x * blockDim.x + threadIdx.x);
+    if(pos < exp * numTokens) {
+      // XXX XXX XXX XXX XXX
+      if(grad[pos] > 1e18)
+        grad[pos] = 0.0f;
+    }
+  }
+  __syncthreads();
+}
+
+void BalancedMoeNormalizeGateGrad(
+    Tensor grad, Tensor in, Tensor val, Tensor inds, Tensor adj) {
+  cudaSetDevice(grad->getDevice().no);
+
+  size_t exp = inds->shape().elements() / inds->shape().back();
+  size_t m = inds->shape().back();
+  int numTokens = grad->shape()[0];
+
+  int blocks = std::min(MAX_BLOCKS, (int)m);
+  int threads = std::min(MAX_THREADS, (int)exp);
+  int shared = sizeof(float) * numTokens * 2;
+
+  gBalancedMoeNormalizeGateGrad<<<blocks, threads, shared>>>(
+      grad->data(), exp, m, numTokens, in->data(), val->data(), inds->data(), adj->data());
+}
+
+}  // namespace marian::gpu
 }  // namespace marian

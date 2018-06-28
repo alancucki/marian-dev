@@ -333,7 +333,7 @@ struct MaxNodeOp : public UnaryNodeOp {
 
   Shape newShape(Expr a) {
     Shape shape1 = a->shape();
-    shape1.set(0, 1);
+    shape1.set(1, 1);
     return shape1;
   }
 
@@ -359,10 +359,138 @@ struct MaxNodeOp : public UnaryNodeOp {
   }
 
   NodeOps backwardOps() {
-    return {NodeOp(MaxGrad(child(0)->grad(), adj_, val_))};
+    return {NodeOp(MaxGrad(child(0)->grad(), adj_, val_, child(0)->val()))};
   }
 
   const std::string type() { return "max"; }
+};
+
+struct TopKNodeOp : public UnaryNodeOp {
+private:
+  const int k_;
+
+public:
+  TopKNodeOp(Expr a, const int k)
+      : UnaryNodeOp(a, newShape(a, k)), k_(k) {}
+
+  Shape newShape(Expr a, const int k) {
+    return Shape({a->shape()[-2], k});
+  }
+
+  NodeOps forwardOps() {
+    return {
+        NodeOp(TopK(val_, k_, child(0)->val()))};
+  }
+
+  virtual size_t hash() {
+    if(!hash_) {
+      hash_ = NaryNodeOp::hash();
+    }
+    return hash_;
+  }
+
+  virtual bool equal(Expr node) {
+    if(!NaryNodeOp::equal(node))
+      return false;
+    Ptr<TopKNodeOp> cnode = std::dynamic_pointer_cast<TopKNodeOp>(node);
+    if(!cnode)
+      return false;
+    return true;
+  }
+
+  NodeOps backwardOps() {
+    return {NodeOp(TopKGrad(child(0)->grad(), adj_, val_, child(0)->val()))};
+  }
+
+  const std::string type() { return "topk"; }
+};
+
+struct TopKIndsNodeOp : public UnaryNodeOp {
+private:
+  const int k_;
+
+public:
+  TopKIndsNodeOp(Expr a, const int k)
+      : UnaryNodeOp(a, newShape(a, k)), k_(k) {}
+
+  Shape newShape(Expr a, const int k) {
+    return Shape({a->shape()[-2], k});
+  }
+
+  NodeOps forwardOps() {
+    return {
+        NodeOp(TopKInds(val_, k_, child(0)->val()))};
+  }
+
+  virtual size_t hash() {
+    if(!hash_) {
+      hash_ = NaryNodeOp::hash();
+    }
+    return hash_;
+  }
+
+  virtual bool equal(Expr node) {
+    if(!NaryNodeOp::equal(node))
+      return false;
+    Ptr<TopKIndsNodeOp> cnode = std::dynamic_pointer_cast<TopKIndsNodeOp>(node);
+    if(!cnode)
+      return false;
+    return true;
+  }
+
+  NodeOps backwardOps() {
+    return {NodeOp(TopKIndsGrad(child(0)->grad(), adj_))};
+  }
+
+  // NodeOps backwardOps() {
+  //   return {}; // XXX NodeOp(MaxGrad(child(0)->grad(), adj_, val_, child(0)->val()))};
+  // }
+
+  const std::string type() { return "top_k_inds"; }
+};
+
+struct TopKMaskNodeOp : public UnaryNodeOp {
+private:
+  const int k_;
+
+public:
+  TopKMaskNodeOp(Expr a, const int k)
+      : UnaryNodeOp(a), k_(k) {}
+
+  // Shape newShape(Expr a, const int k) {
+  //   return Shape({a->shape()[-2], k});
+  // }
+
+  NodeOps forwardOps() {
+    return {
+        NodeOp(TopKMask(val_, k_, child(0)->val()))};
+  }
+
+  virtual size_t hash() {
+    if(!hash_) {
+      hash_ = NaryNodeOp::hash();
+    }
+    return hash_;
+  }
+
+  virtual bool equal(Expr node) {
+    if(!NaryNodeOp::equal(node))
+      return false;
+    Ptr<TopKMaskNodeOp> cnode = std::dynamic_pointer_cast<TopKMaskNodeOp>(node);
+    if(!cnode)
+      return false;
+    return true;
+  }
+
+  NodeOps backwardOps() {
+    return {}; // NodeOp(TopKMaskGrad(child(0)->grad(), adj_))};
+  }
+
+  // NodeOps backwardOps() {
+  //   return {}; // XXX NodeOp(MaxGrad(child(0)->grad(), adj_, val_, child(0)->val()))};
+  // }
+
+  const std::string type() { return "top_k_inds"; }
 };
 
 struct SoftmaxNodeOp : public UnaryNodeOp {
