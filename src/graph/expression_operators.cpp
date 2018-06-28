@@ -31,6 +31,13 @@ Expr prelu(Expr a, float alpha) {
   return Expression<PReLUNodeOp>(alpha, a);
 }
 
+Expr clip(Expr a, float c) {
+  if(c == 0)
+    return a;
+  else
+    return Expression<ClipNodeOp>(a, c);
+}
+
 Expr log(Expr a) {
   return Expression<LogNodeOp>(a);
 };
@@ -220,16 +227,19 @@ Expr weighted_average(Expr in, Expr weights, keywords::axis_k ax) {
 
 Expr dot(Expr a, Expr b, bool transA, bool transB, float scale) {
   auto device = a->graph()->getDevice().type;
+  float clipValue = a->graph()->getBackend()->getClip();
+
   if(a->graph()->isOptimized() && device == DeviceType::cpu) {
     // dotInt16 computes A * B.T, hence the transpose for B to get A * B
     // if transA = false and transB = false.
 
-    return cpu::int16::dot(cpu::int16::quantize(transA ? transpose(a) : a),
-                           cpu::int16::quantize(transB ? b : transpose(b)),
+    return cpu::int16::dot(cpu::int16::quantize(transA ? transpose(a) : a, clipValue),
+                           cpu::int16::quantize(transB ? b : transpose(b), clipValue),
                            scale);
   }
   else {
-    return Expression<DotNodeOp>(a, b, transA, transB, scale);
+    return Expression<DotNodeOp>(clip(a, clipValue), clip(b, clipValue),
+                                 transA, transB, scale);
   }
 }
 
@@ -237,6 +247,7 @@ Expr bdot(Expr a, Expr b, bool transA, bool transB, float scale) {
   return Expression<DotBatchedNodeOp>(a, b, transA, transB, scale);
 }
 
+/*
 Expr bdot(Expr a,
           Expr b,
           const std::vector<size_t>& indicesA,
@@ -246,9 +257,13 @@ Expr bdot(Expr a,
           float scale) {
   return Expression<DotBatchedNodeOp>(a, b, transA, transB, indicesA, indicesB, scale);
 }
+*/
 
 Expr affine(Expr a, Expr b, Expr bias, bool transA, bool transB, float scale) {
   auto device = a->graph()->getDevice().type;
+
+  float clipValue = a->graph()->getBackend()->getClip();
+
   if(a->graph()->isOptimized() && device == DeviceType::cpu) {
 
     bool autotune = true;
@@ -281,8 +296,8 @@ Expr affine(Expr a, Expr b, Expr bias, bool transA, bool transB, float scale) {
         return e;
       };
       auto alg1 = [=]() {
-        return rec1(cpu::int16::affine(rec1(cpu::int16::quantize(transA ? rec1(transpose(a)) : a)),
-                                       cpu::int16::quantize(transB ? b : transpose(b)),
+        return rec1(cpu::int16::affine(rec1(cpu::int16::quantize(transA ? rec1(transpose(a)) : a, clipValue)),
+                                       cpu::int16::quantize(transB ? b : transpose(b), clipValue),
                                        bias,
                                        scale),
                     true);
@@ -296,8 +311,20 @@ Expr affine(Expr a, Expr b, Expr bias, bool transA, bool transB, float scale) {
         e->record(tuner, hash2, stop);
         return e;
       };
+
+
       auto alg2 = [=]() {
-        std::vector<Expr> nodes = {a, b, bias};
+        auto ac = clip(a, clipValue);
+        if(ac != a)
+          ac = rec2(ac);
+
+        auto bc = clip(b, clipValue);
+        if(bc != b)
+          bc = rec2(bc);
+
+        int rows = ac->shape().elements() / ac->shape()[-1];
+        Expr ones = ac->graph()->ones({rows, 1});
+        std::vector<Expr> nodes = {ac, bc, bias, ones};
         return rec2(Expression<AffineNodeOp>(nodes, transA, transB, scale),
                     true);
       };
@@ -309,15 +336,17 @@ Expr affine(Expr a, Expr b, Expr bias, bool transA, bool transB, float scale) {
     }
     else {
       // cpu int16 version
-      return cpu::int16::affine(cpu::int16::quantize(transA ? transpose(a) : a),
-                                cpu::int16::quantize(transB ? b : transpose(b)),
+      return cpu::int16::affine(cpu::int16::quantize(transA ? transpose(a) : a, clipValue),
+                                cpu::int16::quantize(transB ? b : transpose(b), clipValue),
                                 bias,
                                 scale);
     }
   }
   else {
     // general version, MKL, CBlas or CUDA
-    std::vector<Expr> nodes = {a, b, bias};
+    int rows = a->shape().elements() / a->shape()[-1];
+    Expr ones = a->graph()->ones({rows, 1});
+    std::vector<Expr> nodes = {clip(a, clipValue), clip(b, clipValue), bias, ones};
     return Expression<AffineNodeOp>(nodes, transA, transB, scale);
   }
 }

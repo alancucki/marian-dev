@@ -64,8 +64,8 @@ void Reduce(Functor functor, marian::Tensor out, Tensors... tensors) {
 // clang-format off
   DISPATCH7(Prod, marian::Tensor, const marian::Tensor, const marian::Tensor, bool, bool, float, float)
   DISPATCH8(ProdWithBias, marian::Tensor, const marian::Tensor, const marian::Tensor, const marian::Tensor, bool, bool, float, float)
-  DISPATCH7(ProdBatched, marian::Tensor, const marian::Tensor, const marian::Tensor, bool, bool, float, float)
-  DISPATCH9(ProdBatched, marian::Tensor, const marian::Tensor, const marian::Tensor, const std::vector<size_t>&, const std::vector<size_t>&, bool, bool, float, float)
+  // DISPATCH9(ProdBatched, marian::Tensor, const marian::Tensor, const marian::Tensor, const std::vector<size_t>&, const std::vector<size_t>&, bool, bool, float, float)
+  DISPATCH8(ProdBatched, marian::Tensor, Ptr<Allocator>, const marian::Tensor, const marian::Tensor, bool, bool, float, float)
 
   DISPATCH2(Dropout, marian::Tensor, float)
 
@@ -86,8 +86,8 @@ void Reduce(Functor functor, marian::Tensor out, Tensors... tensors) {
   DISPATCH3(CrossEntropyPick, marian::Tensor, marian::Tensor, marian::Tensor)
   DISPATCH4(CrossEntropyPickBackward, marian::Tensor, marian::Tensor, marian::Tensor, marian::Tensor)
 
-  DISPATCH3(TransposeND, marian::Tensor, marian::Tensor, const std::vector<int>&)
-  DISPATCH4(Shift, marian::Tensor, marian::Tensor, marian::Shape, bool)
+  DISPATCH4(TransposeND, marian::Tensor, marian::Tensor, const std::vector<int>&, float)
+  DISPATCH5(Shift, marian::Tensor, marian::Tensor, marian::Shape, bool, float)
 
   DISPATCH3(Concatenate, marian::Tensor, const std::vector<marian::Tensor>&, int)
 

@@ -34,6 +34,8 @@ Expr log(Expr a);
 
 Expr exp(Expr a);
 
+Expr clip(Expr a, float c);
+
 Expr operator-(Expr a);
 
 /*********************************************************/
@@ -69,6 +71,7 @@ Expr bdot(Expr a,
           bool transA = false,
           bool transB = false,
           float scalar = 1.f);
+/*
 Expr bdot(Expr a,
           Expr b,
           const std::vector<size_t>& indicesA,
@@ -76,7 +79,7 @@ Expr bdot(Expr a,
           bool transA = false,
           bool transB = false,
           float scalar = 1.f);
-
+*/
 Expr affine(Expr a,
             Expr b,
             Expr c,
@@ -103,7 +106,6 @@ Expr flatten_2d(Expr a);
 
 Expr rows(Expr a, const std::vector<size_t>& indices);
 Expr cols(Expr a, const std::vector<size_t>& indices);
-
 Expr select(Expr a, int axis, const std::vector<size_t>& indices);
 
 /*********************************************************/

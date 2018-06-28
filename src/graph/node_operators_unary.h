@@ -99,6 +99,45 @@ public:
   }
 };
 
+struct ClipNodeOp : public UnaryNodeOp {
+private:
+  float clip_{0};
+
+public:
+  ClipNodeOp(Expr a, float clip) : UnaryNodeOp(a), clip_{clip} {}
+
+  NodeOps forwardOps() {
+    using namespace functional;
+    return {NodeOp(Element(_1 = clip(_2, clip_), val_, child(0)->val()))};
+  }
+
+  NodeOps backwardOps() {
+    using namespace functional;
+    return {NodeOp(Add(bump(_1, clip_) * _2, child(0)->grad(), child(0)->val(), adj_))};
+  }
+
+  const std::string type() { return "clip"; }
+
+  virtual size_t hash() {
+    if(!hash_) {
+      hash_ = NaryNodeOp::hash();
+      boost::hash_combine(hash_, clip_);
+    }
+    return hash_;
+  }
+
+  virtual bool equal(Expr node) {
+    if(!NaryNodeOp::equal(node))
+      return false;
+    auto cnode = std::dynamic_pointer_cast<ClipNodeOp>(node);
+    if(!cnode)
+      return false;
+    if(clip_ != cnode->clip_)
+      return false;
+    return true;
+  }
+};
+
 struct LogitNodeOp : public UnaryNodeOp {
   LogitNodeOp(Expr a) : UnaryNodeOp(a) {}
 
@@ -932,11 +971,11 @@ struct TransposeNodeOp : public UnaryNodeOp {
       : UnaryNodeOp(a, newShape(a, axes)), axes_{axes} {}
 
   NodeOps forwardOps() {
-    return {NodeOp(TransposeND(val_, child(0)->val(), axes_))};
+    return {NodeOp(TransposeND(val_, child(0)->val(), axes_, 0.f))};
   }
 
   NodeOps backwardOps() {
-    return {NodeOp(TransposeND(child(0)->grad(), adj_, axes_))};
+    return {NodeOp(TransposeND(child(0)->grad(), adj_, axes_, 1.f))};
   }
 
   template <class... Args>
@@ -1123,11 +1162,13 @@ struct ShiftNodeOp : public UnaryNodeOp {
       : UnaryNodeOp(a, a->shape()), shift_(shift) {}
 
   NodeOps forwardOps() {
-    return {NodeOp(Shift(val_, child(0)->val(), shift_, false))};
+    // last parameter beta=0 says to use = (out = in + beta * out)
+    return {NodeOp(Shift(val_, child(0)->val(), shift_, false, 0.f))};
   }
 
   NodeOps backwardOps() {
-    return {NodeOp(Shift(child(0)->grad(), adj_, shift_, true))};
+    // last parameter beta=1 says to use += (out = in + beta * out)
+    return {NodeOp(Shift(child(0)->grad(), adj_, shift_, true, 1.0f))};
   }
 
   const std::string type() { return "shift"; }

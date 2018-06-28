@@ -83,15 +83,17 @@ Expr LayerStrictlyBalancedMoE(Ptr<ExpressionGraph> graph,
   // auto topk = top_k(transpose(gate), m);
 
   // (EXPERTS, M)
-  auto tr = transpose(gate);  // BUG transpose zeroes the gradient (instead of adding zeroes)
   // auto topInds = top_k_inds(tr, m);
   // topInds->setTrainable(false);
-  tr->setTrainable(false);
 
   // topLogits = reshape(
   //     topLogits, Shape({topLogits->shape()[-2], topLogits->shape()[-1], 1}));
 
-  auto topMask = transpose(top_k_mask(tr, m));
+  auto tr = transpose(gate);  // BUG transpose zeroes the gradient (instead of adding zeroes)
+  tr->setTrainable(false);
+  auto topMask = top_k_mask(tr, m);
+  topMask->setTrainable(false);
+  topMask = transpose(topMask);
   topMask->setTrainable(false);
   // auto topLogits = balanced_moe_normalize_gate_with_mask(soft, topMask, numTokens);
 
