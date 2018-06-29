@@ -433,8 +433,9 @@ public:
 
     // (TOKENS, EXPERTS)
     auto gate = dot(inputFlat, gateW);
-
     auto trGate = transpose(gate);
+    // gate->debug("GATE" + gate->label());
+    // trGate->debug("TRGATE" + trGate->label());
     auto trTopMask = top_k_mask(trGate, m);
     // (TOKENS, EXPERTS)
     auto topMask = transpose(trTopMask);
