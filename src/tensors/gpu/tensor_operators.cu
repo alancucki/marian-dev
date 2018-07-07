@@ -13,8 +13,22 @@
 #include <thrust/functional.h>
 #include <thrust/transform_reduce.h>
 
+#define CUDART_NAN_F            __int_as_float(0x7fffffff) // XXX
+
 #define MYASSERT(condition, msg) \
   if (!(condition)) { printf(msg) ; return; }
+
+#define CHECK(msg) \
+//{ std::cout << msg << " max value: " << MaxVal(in) << "\n"; \
+  std::cout << msg << " min value: " << MinVal(in) << "\n"; \
+  if(IsNan(in)) { std::cout << msg << " NaNs of Infs spotted (in)\n"; throw std::runtime_error("NaNs encountered"); } \
+  if(IsNan(out)) { std::cout << msg << " NaNs of Infs spotted (out)\n"; throw std::runtime_error("NaNs encountered"); } }
+
+#define CHECK_GRAD(msg) \
+//{ std::cout << msg << " max value: " << MaxVal(grad) << "\n"; \
+  std::cout << msg << " min value: " << MinVal(grad) << "\n"; \
+  if(IsNan(adj)) { std::cout << msg << " NaNs of Infs spotted (adj)\n"; throw std::runtime_error("NaNs encountered"); } \
+  if(IsNan(grad)) { std::cout << msg << " NaNs of Infs spotted (grad)\n"; throw std::runtime_error("NaNs encountered"); } }
 
 namespace marian {
 
@@ -22,6 +36,10 @@ namespace gpu {
 
 struct isnan_test {
   __host__ __device__ bool operator()(const float a) const { return isnan(a); }
+};
+
+struct identity {
+  __host__ __device__ float operator()(const float a) const { return a; }
 };
 
 __device__ inline float stableLogit(float x) {
@@ -37,13 +55,52 @@ __device__ inline float stableLogit(float x) {
 bool IsNan(Tensor in) {
   // return false; // XXX
 
-  cudaSetDevice(in->getDevice().no);
-  thrust::device_ptr<float> begin = thrust::device_pointer_cast(in->data());
-  thrust::device_ptr<float> end
-     = thrust::device_pointer_cast(in->data() + in->size());
-  return thrust::transform_reduce(
-     begin, end, isnan_test(), 0, thrust::plus<bool>());
-  return false;
+  try {
+    cudaSetDevice(in->getDevice().no);
+    thrust::device_ptr<float> begin = thrust::device_pointer_cast(in->data());
+    thrust::device_ptr<float> end
+       = thrust::device_pointer_cast(in->data() + in->size());
+    return thrust::transform_reduce(
+       begin, end, isnan_test(), false, thrust::plus<bool>());
+  } catch(...) {
+    std::cout << "  IsNan failed " << in->data() << "\n";
+    return false;
+  }
+  // return false;
+}
+
+float MaxVal(Tensor in) {
+  // return false; // XXX
+
+  try {
+    cudaSetDevice(in->getDevice().no);
+    thrust::device_ptr<float> begin = thrust::device_pointer_cast(in->data());
+    thrust::device_ptr<float> end
+       = thrust::device_pointer_cast(in->data() + in->size());
+    return thrust::transform_reduce(
+       begin, end, identity(), -1e20, thrust::maximum<float>());
+  } catch(...) {
+    // std::cout << "  MaxVal failed\n";
+    return 0.f;
+  }
+  // return 0.f;
+}
+
+float MinVal(Tensor in) {
+  // return false; // XXX
+
+  try {
+    cudaSetDevice(in->getDevice().no);
+    thrust::device_ptr<float> begin = thrust::device_pointer_cast(in->data());
+    thrust::device_ptr<float> end
+       = thrust::device_pointer_cast(in->data() + in->size());
+    return thrust::transform_reduce(
+       begin, end, identity(), 1e20, thrust::minimum<float>());
+  } catch(...) {
+    // std::cout << "  MaxVal failed\n";
+    return 0.f;
+  }
+  // return 0.f;
 }
 
 void ConcatCont(Tensor out, const std::vector<Tensor>& inputs, int axis) {
@@ -388,10 +445,11 @@ void TransposeNDGrad(Tensor out, Tensor in, const std::vector<int>& vAxis) {
 
     gTransposeND<true><<<blocks, threads>>>(out, in, axes);
   }
-  if(IsNan(in))
-    std::cout << in << " NaNs or infs spotted in transpose(in)\n";
-  if(IsNan(out))
-    std::cout << in << " NaNs or infs spotted in transpose(out)\n";
+  // std::cout << "Checking transpose\n";
+  // if(IsNan(in))
+  //   std::cout << in << " NaNs or infs spotted in transpose(in)\n";
+  // if(IsNan(out))
+  //   std::cout << in << " NaNs or infs spotted in transpose(out)\n";
 }
 
 __global__ void gSoftmax(float* out,
@@ -778,7 +836,7 @@ __global__ void gTopKMask(float* out,
 
         extern __shared__ float _share[];
         int32_t* maxInd = (int32_t*)&_share[blockDim.x];
-        int32_t* outInds = (int32_t*)&_share[blockDim.x * 2];
+        int32_t* outInds = (int32_t*)&maxInd[blockDim.x];
 
         // TODO Why was it shifted by blockDim.x ?
         float* _max = _share; // + blockDim.x;
@@ -858,8 +916,8 @@ void TopKMask(Tensor out, const size_t k, Tensor in) {
   gTopKMask<<<blocks, threads, shared>>>(
       out->data(), k, in->shape(), in->data());
 
-  if(IsNan(out))
-    std::cout << "NaNs or infs spotted in TopKMask\n";
+  // std::cout << "Checking TopKMask\n";
+  CHECK("TopKMask");
 }
 
 // blocks compute rows, threads compute columns within each row
@@ -921,9 +979,8 @@ __global__ void gTopKIndsGrad(float* grad,
 
       for(int tid = 0; tid < cols; tid += blockDim.x) {
         int id = tid + threadIdx.x;
-        if(id < cols) {
-          // so[id] = 1.0;
-          }
+        if(id < cols)
+          so[id] += 1.0; // XXX
         __syncthreads();
       }
     }
@@ -2714,7 +2771,8 @@ __global__ void gBalancedMoeSlicerWithMask(float* out,
       // Zero output matrix
       for(int m_ = 0; m_ < m; ++m_) {
         for(int tid = 0; tid < dim; tid += blockDim.x) {
-          out[(e * m + m_) * + (tid % dim)] = 0.0f;
+          int d = tid + threadIdx.x;
+          out[(e * m + m_) * + (d % dim)] = 0.f;
         }
       }
       __syncthreads();
@@ -2751,8 +2809,7 @@ void BalancedMoeSlicerWithMask(Tensor out, Tensor in, Tensor mask) {
   gBalancedMoeSlicerWithMask<<<blocks, threads>>>(
       out->data(), numTokens, dim, exp, m, in->data(), mask->data());
 
-  if(IsNan(out))
-    std::cout << "NaNs or infs spotted in Slicer\n";
+  CHECK("Slicer");
 }
 
 __global__ void gBalancedMoeSlicerWithMaskGrad(float* grad,
@@ -2801,8 +2858,7 @@ void BalancedMoeSlicerWithMaskGrad(Tensor grad, Tensor val, Tensor mask, Tensor 
   gBalancedMoeSlicerWithMaskGrad<<<blocks, threads>>>(
       grad->data(), numTokens, dim, exp, m, mask->data(), adj->data());
 
-  if(IsNan(grad))
-    std::cout << "NaNs or infs spotted in SlicerGrad\n";
+  CHECK_GRAD("SlicerGrad");
 }
 
 __global__ void gBalancedMoeSlicer(float* out,
@@ -2960,7 +3016,8 @@ __global__ void gBalancedMoeStitcherWithMask(float* out,
 
       // Zero output matrix
       for(int tid = 0; tid < dim; tid += blockDim.x) {
-        out[t * dim + (tid % dim)] = 0.0f;
+        int d = tid + threadIdx.x;
+        out[t * dim + (d % dim)] = 0.f;
       }
       __syncthreads();
 
@@ -2978,6 +3035,8 @@ __global__ void gBalancedMoeStitcherWithMask(float* out,
 
     }
   }
+  // for(int i = 0; i < numTokens * dim; ++i)
+  //   out[i] = CUDART_NAN_F; // XXX
 }
 
 void BalancedMoeStitcherWithMask(Tensor out, Tensor in, Tensor mask) {
@@ -2994,8 +3053,7 @@ void BalancedMoeStitcherWithMask(Tensor out, Tensor in, Tensor mask) {
   gBalancedMoeStitcherWithMask<<<blocks, threads>>>(
       out->data(), exp, m, dim, numTokens, in->data(), mask->data());
 
-  if(IsNan(out))
-    std::cout << "NaNs or infs spotted in Stitcher\n";
+  CHECK("Stitcher");
 }
 
 __global__ void gBalancedMoeStitcherWithMaskGrad(float* grad,
@@ -3027,6 +3085,8 @@ __global__ void gBalancedMoeStitcherWithMaskGrad(float* grad,
 
     }
   }
+  // for(int i = 0; i < exp * m * dim; ++i)
+  //   grad[i] = CUDART_NAN_F; // XXX
 }
 
 void BalancedMoeStitcherWithMaskGrad(
@@ -3044,8 +3104,7 @@ void BalancedMoeStitcherWithMaskGrad(
   gBalancedMoeStitcherWithMaskGrad<<<blocks, threads>>>(
       grad->data(), exp, m, dim, numTokens, val->data(), mask->data(), adj->data());
 
-  if(IsNan(grad))
-    std::cout << "NaNs or infs spotted in StitcherGrad\n";
+  CHECK_GRAD("StitcherGrad");
 }
 
 __global__ void gBalancedMoeStitcherGrad(float* grad,
@@ -3123,24 +3182,24 @@ __global__ void gBalancedMoeNormalizeGateWithMask(float *out,
       }
       __syncthreads();
 
-      if(threadIdx.x == 0) {
-        for(int ee1 = 0; ee1 < exp; ++ee1) {
-          int m_ = (int)mask[t * exp + ee1];
-          if(m_ >= 0 && fabs(norm[t]) < 1e-20) {
-            printf("(%d) norm[%d] == %f\n", blockIdx.x, t, norm[t]);
-            printf("(%d) exp %d ERROR FOR i == %d\n", blockIdx.x, exp, t);
-            // for(int tt = 0; tt < numTokens; ++tt) {
-              for(int ee = 0; ee < exp; ++ee)
-                printf("(%d) %f\n", blockIdx.x, in[t * exp + ee]);
-              printf("(%d) mask:\n", blockIdx.x);
-              for(int ee = 0; ee < exp; ++ee)
-                printf("(%d) %d ", blockIdx.x, mask[t * exp + ee]);
-              printf("\n");
-            // }
-            return;
-          }
-        }
-      }
+      // if(threadIdx.x == 0) {
+      //   for(int ee1 = 0; ee1 < exp; ++ee1) {
+      //     int m_ = (int)mask[t * exp + ee1];
+      //     if(m_ >= 0 && fabs(norm[t]) < 1e-20) {
+      //       printf("(%d) norm[%d] == %f\n", blockIdx.x, t, norm[t]);
+      //       printf("(%d) exp %d ERROR FOR i == %d\n", blockIdx.x, exp, t);
+      //       // for(int tt = 0; tt < numTokens; ++tt) {
+      //         for(int ee = 0; ee < exp; ++ee)
+      //           printf("(%d) %f\n", blockIdx.x, in[t * exp + ee]);
+      //         printf("(%d) mask:\n", blockIdx.x);
+      //         for(int ee = 0; ee < exp; ++ee)
+      //           printf("(%d) %d ", blockIdx.x, mask[t * exp + ee]);
+      //         printf("\n");
+      //       // }
+      //       return;
+      //     }
+      //   }
+      // }
 
       for(int tid = 0; tid < exp; tid += blockDim.x) {
         int e = tid + threadIdx.x;
@@ -3171,10 +3230,7 @@ void BalancedMoeNormalizeGateWithMask(Tensor out, Tensor in, Tensor mask, const 
   gBalancedMoeNormalizeGateWithMask<<<blocks, threads, shared>>>(
       out->data(), exp, m, in->data(), mask->data(), numTokens);
 
-  if(IsNan(in))
-    std::cout << "NaNs or infs spotted in Gate (input)\n";
-  if(IsNan(out))
-    std::cout << "NaNs or infs spotted in Gate\n";
+  CHECK("Gate");
 }
 
 __global__ void gBalancedMoeNormalizeGateWithMaskGrad(float* grad,
@@ -3215,15 +3271,27 @@ __global__ void gBalancedMoeNormalizeGateWithMaskGrad(float* grad,
             int m_ = (int)mask[t * exp + e];
             for(int egrad = 0; egrad < exp; ++egrad) {
               // MYASSERT(fabs(norm[t]) < 1e-20, "GateGrad: norm[t] == 0\n");
+
+              // XXX If norm[t] is 0.0, partial is Inf, and flag * partial is NaN
+              // float partial = ((float)(e == egrad) - val[e * m + m_]) / norm[t];
+              // float adj_ = adj[e * m + m_];
+              // float flag = ((float)(mask[t * exp + egrad] > -0.5f));
+              // atomicAdd(grad + (t * exp + egrad), flag * adj_ * partial);
+
+              // TODO It might be faster to do:
+              //
+              //   float partial = ((float)(e == egrad) - val[e * m + m_]) / (norm[t] + 1.0 - flag);
+              //   ...
+              //   atomicAdd(grad + (t * exp + egrad), flag * adj_ * partial);
+              //
               float partial = ((float)(e == egrad) - val[e * m + m_]) / norm[t];
               float adj_ = adj[e * m + m_];
-              float flag = ((float)(mask[t * exp + egrad] > -0.5f));
-              atomicAdd(grad + (t * exp + egrad), flag * adj_ * partial);
+              if(mask[t * exp + egrad] > -1)
+                atomicAdd(grad + (t * exp + egrad), adj_ * partial);
             }
           }
         }
       } // finished computing gradients
-
     }
   }
 }
@@ -3245,8 +3313,8 @@ void BalancedMoeNormalizeGateWithMaskGrad(
 
   // bool nan_ = false;
   // gIsNan<<<blocks, threads>>>(grad->data(), &nan_, numTokens * exp);
-  if(IsNan(grad))
-    std::cout << "NaNs or infs spotted in GateGrad\n";
+  // std::cout << "Checking GateWithMaskGrad\n";
+  CHECK_GRAD("GateGrad");
 }
 
 /**************************************************/

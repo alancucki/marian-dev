@@ -20,6 +20,10 @@
 #include "tensors/cpu/element.h"
 
 namespace marian {
+  // XXX
+  namespace gpu {   
+    bool IsNan(Tensor in);
+  }
 
 template <class Functor, class... Tensors>
 void Element(Functor functor, marian::Tensor out, Tensors... tensors) {

@@ -19,6 +19,8 @@
 #include <map>
 #include <unordered_set>
 
+#include "tensors/tensor_operators.h"
+
 namespace marian {
 
 template <class T, typename... Args>
@@ -220,11 +222,13 @@ public:
   }
 
   void checkNan(Tensor t);
+  bool checkNan(Expr e, bool print, bool grad = false);
 
   void forwardNext() {
     // @TODO: check if allocation works properly
     tensors_->clearShorttermMemory();
 
+    /*
     while(!nodesForward_.empty()) {
       auto v = nodesForward_.front();
       v->allocate();
@@ -233,7 +237,8 @@ public:
       v->init();
       v->forward();
 
-      checkNan(v->val());
+      checkNan(v);
+      // checkNan(v->val());
 
       if(v->marked_for_debug()) {
         std::cerr << "Debug: " << v->debug_message() << " op=" << v->type() << std::endl;
@@ -246,6 +251,55 @@ public:
 
       if(v->pauseForwarding)
         break;
+    }
+    */
+
+    bool dumpAndExit = false;
+    for(auto&& v : nodesForward_) {
+      v->allocate();
+      // XXX
+      // std::cout << "INITIALIZING NODE: " << v << "\t" << v->label() << "\t" << v->shape() << "\n";
+      v->init();
+      v->forward();
+
+      if(v->marked_for_debug()) {
+        std::cerr << "Debug: " << v->debug_message() << " op=" << v->type() << std::endl;
+        std::cerr << v->val()->debug() << std::endl;
+      }
+
+      // dumpAndExit = (dumpAndExit || gpu::IsNan(v->val()));
+    }
+
+    if(dumpAndExit) {
+      LOG(warn, "[debug] NaNs spotted, dumping relevant tensors");
+      std::ofstream file("matrix_dump.txt");
+
+      auto vLast = nodesForward_.front();
+      for(auto&& v : nodesForward_) {
+        bool fullDump = gpu::IsNan(v->val());
+
+        // if(fullDump)
+        //   file << vLast->val()->debug(fullDump) << std::endl;
+
+        file << "Debug: " << v->debug_message() << " op=" << v->type() << std::endl;
+        // file << v->val()->debug(fullDump) << std::endl;
+        file << v->val()->debug(true) << std::endl;
+        file.flush();
+        vLast = v;
+
+        if(fullDump)
+          break;
+      }
+      file.close();
+      ABORT("NaNs spotted (tesnors dumped)\n");
+    }
+
+    // Clear
+    while(!nodesForward_.empty()) {
+      auto v = nodesForward_.front();
+      if(inferenceOnly_)
+        v->children().clear();
+      nodesForward_.pop_front();
     }
   }
 
@@ -265,6 +319,7 @@ public:
 
     tensors_->clearShorttermMemory();
 
+    /*
     while(!nodesBackward_.empty()) {
       auto v = nodesBackward_.back();
       nodesBackward_.pop_back();
@@ -277,7 +332,8 @@ public:
       if(v->trainable())
         v->backward();
 
-      checkNan(v->grad());
+      checkNan(v, true);
+      // checkNan(v->grad());
 
       if(v->trainable() && v->marked_for_debug()) {
         std::cerr << "Debug Grad: " << v->debug_message() << std::endl;
@@ -286,6 +342,73 @@ public:
 
       v->children().clear();
     }
+    */
+
+    bool dumpAndExit = false;
+    for(auto&& vit = nodesBackward_.rbegin(); vit != nodesBackward_.rend(); ++vit) {
+      auto v = *vit;
+
+      for(auto&& child : v->children()) {
+        if(child->trainable())
+          child->set_zero_adjoint();
+      }
+
+      if(v->trainable())
+        v->backward();
+
+      if(v->trainable() && v->marked_for_debug()) {
+        std::cerr << "Debug Grad: " << v->debug_message() << std::endl;
+        std::cerr << v->grad()->debug() << std::endl;
+      }
+
+      // if(v->trainable())
+      //   dumpAndExit = (dumpAndExit || gpu::IsNan(v->grad()));
+    }
+
+    if(dumpAndExit) {
+      LOG(warn, "[debug] NaNs spotted, dumping relevant tensors");
+      std::ofstream file("matrix_dump.txt");
+
+      auto vLast = nodesBackward_.front();
+      for(auto&& vit = nodesBackward_.rbegin(); vit != nodesBackward_.rend(); ++vit) {
+        auto v = *vit;
+
+        bool fullDump = false;
+        if(v->trainable())
+          fullDump = gpu::IsNan(v->grad());
+
+        // if(fullDump) {
+        //   if(vLast->trainable()) {
+        //     file << vLast->grad()->debug(true) << std::endl;
+        //   } else {
+        //     file << "<not trainable>" << std::endl << std::endl << std::endl;
+        //   }
+        // }
+
+        file << "Debug Grad: " << v->debug_message() << " op=" << v->type() << std::endl;
+        if(v->trainable()) {
+          file << v->grad()->debug(true) << std::endl;
+          // file << v->grad()->debug(fullDump) << std::endl;
+        } else {
+          file << "<not trainable>" << std::endl << std::endl << std::endl;
+        }
+        file.flush();
+        vLast = v;
+
+        if(fullDump)
+          break;
+      }
+      file.close();
+      ABORT("NaNs spotted (tesnors dumped)\n");
+    }
+
+    // Clear
+    while(!nodesBackward_.empty()) {
+      auto v = nodesBackward_.back();
+      nodesBackward_.pop_back();
+      v->children().clear();
+    }
+
   }
 
   std::string graphviz() {

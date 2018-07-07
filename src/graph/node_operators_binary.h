@@ -977,7 +977,7 @@ public:
                                                  adj_))};
   }
 
-  const std::string type() { return "b_moe_slicer"; }
+  const std::string type() { return "b_moe_slicer_with_mask"; }
 };
 
 class BalancedMoeStitcherOp : public NaryNodeOp {
@@ -1032,7 +1032,7 @@ public:
                                                    adj_))};
   }
 
-  const std::string type() { return "b_moe_stitcher"; }
+  const std::string type() { return "b_moe_stitcher_with_mask"; }
 };
 
 class BalancedMoeNormalizeGateOp : public NaryNodeOp {
@@ -1101,6 +1101,6 @@ public:
     //                                        adj_))};
   }
 
-  const std::string type() { return "b_moe_norm_gate"; }
+  const std::string type() { return "b_moe_norm_gate_with_mask"; }
 };
 }

@@ -416,15 +416,27 @@ public:
     int hidExperts = options->get<int>("mixofexperts-dim-hid");
     int numExperts = options->get<int>("mixofexperts-num-experts");
     int k = options->get<int>("mixofexperts-sel-experts");
-    // auto act = options->get<std::string>("mixofexperts-ffn-activation");
-    std::string act("relu");
 
     int dimModel = input->shape()[-1];
     int numTokens = input->shape()[-3] * input->shape()[-2];
     int m = (int)std::ceil(1.0 * k * numTokens / numExperts);
 
+    /****/
+    float dropProb = inference ? 0 : options->get<float>("transformer-dropout");
+    auto opsPre = options->get<std::string>("transformer-preprocess");
+
+    int dimFfn = options->get<int>("transformer-dim-ffn");
+    int depthFfn = options->get<int>("transformer-ffn-depth");
+    /****/
+    auto act = options->get<std::string>("transformer-ffn-activation");
+    auto inputPre = PreProcess(graph, prefix + "_moebalanced", opsPre, input, dropProb);
+
+    // XXX Unused
+    // float ffnDropProb
+    //   = inference ? 0 : options->get<float>("transformer-dropout-ffn");
+
     // (TOKENS, DIM)
-    auto inputFlat = reshape(input, {numTokens, dimModel});
+    auto inputFlat = reshape(inputPre, {numTokens, dimModel});
 
     // Compute the gate
     auto gateW = graph->param(
@@ -478,7 +490,11 @@ public:
     // sliced->debug("SLICED" + sliced->label());
     // inputFlat->debug("INPUT_FLAT" + inputFlat->label());
 
-    return reshaped;
+    auto opsPost = options->get<std::string>("transformer-postprocess");
+    auto output
+        = PostProcess(graph, prefix + "_moebalanced", opsPost, reshaped, input, dropProb);
+
+    return output;
   }
 
   Expr LayerAAN(Ptr<ExpressionGraph> graph,
@@ -895,11 +911,6 @@ public:
         }
 
       } else {
-        query = LayerFFN(graph,
-                         options_,
-                         prefix_ + "_l" + std::to_string(i) + "_ffn",
-                         query,
-                         inference_);
         query = LayerFFN(graph, // [-4: beam depth=1, -3: batch size, -2: max length, -1: vector dim]
                          options_,
                          prefix_ + "_l" + std::to_string(i) + "_ffn",

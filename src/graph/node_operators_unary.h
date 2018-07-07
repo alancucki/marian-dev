@@ -529,7 +529,7 @@ public:
   //   return {}; // XXX NodeOp(MaxGrad(child(0)->grad(), adj_, val_, child(0)->val()))};
   // }
 
-  const std::string type() { return "top_k_inds"; }
+  const std::string type() { return "top_k_inds_with_mask"; }
 };
 
 struct SoftmaxNodeOp : public UnaryNodeOp {

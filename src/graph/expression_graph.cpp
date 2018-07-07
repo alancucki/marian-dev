@@ -24,6 +24,40 @@ Expr ExpressionGraph::dropout(float prob, const Shape& shape) {
 
 void ExpressionGraph::checkNan(Tensor t) {
   ABORT_IF(throwNaN_, "Not implemented");
-  // ABORT_IF(throwNaN_ && IsNan(t), "Tensor has NaN");
+  // ABORT_IF(throwNaN_ && gpu::IsNan(t), "Tensor has NaN"); // XXX
+  ABORT_IF(gpu::IsNan(t), "Tensor has NaN"); // XXX
+}
+
+bool ExpressionGraph::checkNan(Expr e, bool print, bool grad) {
+
+  // // values
+  // size_t totSize = shape_.elements();
+  // std::vector<T> values(totSize);
+  // get(values);
+
+  auto out = e->val();
+  if(grad) {
+    out = e->grad();
+  }
+  std::cout << "POINTER: " << out << "\n";
+  if(out != nullptr) {
+
+      if(print) {
+        for(int i = 0; i < out->shape().elements(); ++i) {
+          std::cout << out->data()[i] << " ";
+        }
+      }
+    if(gpu::IsNan(out)) {
+      std::cerr << this << " " << out << " " << e->label() << " " << e->type() << "\n";
+      if(print) {
+        for(int i = 0; i < out->shape().elements(); ++i) {
+          std::cout << out->data()[i] << " ";
+        }
+      }
+      std::cout << "\n";
+      return true;
+    }
+  }
+  return false;
 }
 }

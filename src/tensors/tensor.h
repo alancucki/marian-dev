@@ -227,7 +227,7 @@ public:
   }
 
   template <typename T>
-  std::string debug() {
+  std::string debug(bool isFull = false) {
     ABORT_IF(!matchType<T>(type_),
              "Requested type ({}) and underlying type ({}) do not match",
              request<T>(),
@@ -247,7 +247,7 @@ public:
     std::vector<T> values(totSize);
     get(values);
 
-    size_t dispCols = 5;
+    size_t dispCols = (isFull ? 10000000 : 5); // XXX
     if(isFloat(type_))
       strm << std::fixed << std::setprecision(8) << std::setfill(' ');
     else
@@ -317,20 +317,20 @@ public:
     return strm.str();
   }
 
-  std::string debug() {
+  std::string debug(bool isFull = false) {
     switch (type_) {
-      case Type::int8:  return debug<int8_t>();
-      case Type::int16: return debug<int16_t>();
-      case Type::int32: return debug<int32_t>();
-      case Type::int64: return debug<int64_t>();
+      case Type::int8:  return debug<int8_t>(isFull);
+      case Type::int16: return debug<int16_t>(isFull);
+      case Type::int32: return debug<int32_t>(isFull);
+      case Type::int64: return debug<int64_t>(isFull);
 
-      case Type::uint8:  return debug<uint8_t>();
-      case Type::uint16: return debug<uint16_t>();
-      case Type::uint32: return debug<uint32_t>();
-      case Type::uint64: return debug<uint64_t>();
+      case Type::uint8:  return debug<uint8_t>(isFull);
+      case Type::uint16: return debug<uint16_t>(isFull);
+      case Type::uint32: return debug<uint32_t>(isFull);
+      case Type::uint64: return debug<uint64_t>(isFull);
 
-      case Type::float32: return debug<float>();
-      case Type::float64: return debug<double>();
+      case Type::float32: return debug<float>(isFull);
+      case Type::float64: return debug<double>(isFull);
 
       default: ABORT("Unknown type {}", type_);
     }

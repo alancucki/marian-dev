@@ -120,6 +120,7 @@ public:
       fetchParams(graphs_[idx]->params()->vals(), paramsAvg_);
 
     std::string name = options_->get<std::string>("model");
+    std::string nameOverwrite = name;
 
     if(options_->get<bool>("overwrite")) {
       builders_[idx]->save(graphs_[idx], name, true);
@@ -130,7 +131,6 @@ public:
         std::string numberOfBatches
             = scheduler_ ? std::to_string(scheduler_->numberOfBatches())
                          : "unknown";
-        std::string nameOverwrite = name;
         nameOverwrite.replace(
             name.size() - 4, 4, ".iter" + numberOfBatches + ".npz");
         builders_[idx]->save(graphs_[idx], nameOverwrite);
@@ -139,6 +139,8 @@ public:
       builders_[idx]->save(graphs_[idx], name, true);
       if(scheduler_)
         scheduler_->save(name);
+      if(!final)
+        scheduler_->save(nameOverwrite);
     }
 
     if(movingAvg_ && paramsAvg_.size() > 0)
@@ -146,6 +148,11 @@ public:
 
     size_t totalSize = graphs_[idx]->params()->vals()->size();
     shardOpt_[idx]->save(name + ".optimizer.npz", shardOpt_, totalSize);
+    
+    if(!options_->get<bool>("overwrite") && !final) {
+      // Save a copy under model.iterXXXX.npz.optimizer.npz
+      shardOpt_[idx]->save(nameOverwrite + ".optimizer.npz", shardOpt_, totalSize);
+    }
   }
 
   Ptr<data::BatchStats> collectStats() {

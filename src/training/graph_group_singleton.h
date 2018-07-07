@@ -79,6 +79,7 @@ public:
 
   void save(Ptr<ExpressionGraph> graph, bool final = false) {
     std::string name = options_->get<std::string>("model");
+    std::string nameOverwrite = name;
 
     if(options_->get<bool>("overwrite")) {
       builder_->save(graph, name, true);
@@ -89,7 +90,6 @@ public:
         std::string numberOfBatches
             = scheduler_ ? std::to_string(scheduler_->numberOfBatches())
                          : "unknown";
-        std::string nameOverwrite = name;
         nameOverwrite.replace(
             name.size() - 4, 4, ".iter" + numberOfBatches + ".npz");
         builder_->save(graph, nameOverwrite);
@@ -98,10 +98,17 @@ public:
       builder_->save(graph, name, true);
       if(scheduler_)
         scheduler_->save(name);
+      if(!final)
+        scheduler_->save(nameOverwrite);
     }
 
     size_t totalSize = graph_->params()->vals()->size();
     opt_->save(name + ".optimizer.npz", {opt_}, totalSize);
+
+    if(!options_->get<bool>("overwrite") && !final) {
+      // Save a copy under model.iterXXXX.npz.optimizer.npz
+      opt_->save(nameOverwrite + ".optimizer.npz", {opt_}, totalSize);
+    }
   }
 
   Ptr<data::BatchStats> collectStats() {
