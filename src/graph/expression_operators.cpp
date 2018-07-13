@@ -559,4 +559,12 @@ Expr balanced_moe_normalize_gate(Expr a, Expr b, const size_t numTokens) {
 Expr balanced_moe_normalize_gate_with_mask(Expr a, Expr b, const size_t numTokens) {
   return Expression<BalancedMoeNormalizeGateWithMaskOp>(a, b, numTokens);
 }
+
+Expr signum(Expr a) {
+  return Expression<SignumNodeOp>(a);
+}
+
+Expr abs(Expr a) {
+  return Expression<AbsNodeOp>(a);
+}
 }

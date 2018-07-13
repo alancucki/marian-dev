@@ -98,7 +98,7 @@ public:
   }
 
   virtual bool marked_for_debug() { return markedForDebug_; }
-  virtual const std::string& debug_message() { return debugMessage_; }
+  // virtual bool marked_for_debug() { return rand() % 2000 == 0 ? markedForDebug_ : false; }
 
   virtual size_t allocate();
 

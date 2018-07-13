@@ -5,6 +5,7 @@
 #include "layers/loss.h"
 #include "layers/weight.h"
 #include "models/encoder_decoder.h"
+#include "models/transformer.h"
 
 namespace marian {
 namespace models {
@@ -63,6 +64,25 @@ public:
                           state->getTargetIndices(),
                           state->getTargetMask(),
                           weights);
+
+    if(options_->get<bool>("mixofexperts-thresholds")) {
+      auto encdec = std::static_pointer_cast<EncoderDecoder>(model);
+      for(auto enc : encdec->getEncoders()) {
+        auto encTransf = std::static_pointer_cast<EncoderTransformer>(enc);
+        for(auto moeLayerCost : encTransf->moeThreshCosts) {
+          // std::cout << "ENCODER CACHED (at " << encTransf << "): " << moeLayerCost << "\n";
+          cost = cost + moeLayerCost;
+        }
+      }
+      for(auto dec : encdec->getDecoders()) {
+        auto decTransf = std::static_pointer_cast<DecoderTransformer>(dec);
+        for(auto moeLayerCost : decTransf->moeThreshCosts) {
+          // std::cout << "DECODER CACHED (at " << decTransf << "): " << moeLayerCost << " " << moeLayerCost->shape() << "\n";
+          // cost = cost + encTransf->cache_[enc->prefix + "_moeThreshCost"];
+          cost = cost + moeLayerCost;
+        }
+      }
+    }
 
     if(options_->has("guided-alignment") && !inference_) {
       auto alignments = encdec->getDecoders()[0]->getAlignments();

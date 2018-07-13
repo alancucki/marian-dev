@@ -35,6 +35,7 @@ Expr log(Expr a);
 Expr exp(Expr a);
 
 Expr clip(Expr a, float c);
+Expr fullclip(Expr a, float c);
 
 Expr operator-(Expr a);
 
@@ -184,4 +185,6 @@ Expr balanced_moe_stitcher(Expr a, Expr b, const size_t numTokens);
 Expr balanced_moe_stitcher_with_mask(Expr a, Expr b);
 Expr balanced_moe_normalize_gate(Expr a, Expr b, const size_t numTokens);
 Expr balanced_moe_normalize_gate_with_mask(Expr a, Expr b, const size_t numTokens);
+Expr signum(Expr a);
+Expr abs(Expr a);
 }

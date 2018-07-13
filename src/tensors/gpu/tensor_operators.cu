@@ -2779,7 +2779,7 @@ __global__ void gBalancedMoeSlicerWithMask(float* out,
 
       for(int t = 0; t < numTokens; ++t) {
         int m_ = (int)mask[t * exp + e];
-        if(m_ >= 0) {
+        if(m_ > -1e-20f) { // >= zero, but values are ints casted to floats
           const float* src = &in[t * dim];
           float* tgt = &out[(e * m + m_) * dim];
           for(int tid = 0; tid < dim; tid += blockDim.x) {
@@ -2825,7 +2825,7 @@ __global__ void gBalancedMoeSlicerWithMaskGrad(float* grad,
     if(e < exp) {
       for(int t = 0; t < numTokens; ++t) {
         int m_ = (int)mask[t * exp + e];
-        if(m_ >= 0) {
+        if(m_ > -1e-20f) { // >= zero, but values are ints casted to floats
 
           float* tgt = &grad[t * dim];
           const float* adjSrc = &adj[(e * m + m_) * dim];
@@ -3025,7 +3025,7 @@ __global__ void gBalancedMoeStitcherWithMask(float* out,
         int e = tid + threadIdx.x;
         if(e < exp) {
           int m_ = (int)mask[t * exp + e];
-          if(m_ >= 0) {
+          if(m_ > -1e-20f) { // >= zero, but values are ints casted to floats
             const float* src = &in[(e * m + m_) * dim];
             for(int d = 0; d < dim; ++d)
               atomicAdd(out + t * dim + d, src[d]);
@@ -3073,7 +3073,7 @@ __global__ void gBalancedMoeStitcherWithMaskGrad(float* grad,
         int e = tid + threadIdx.x;
         if(e < exp) {
           int m_ = (int)mask[t * exp + e];
-          if(m_ >= 0) {
+          if(m_ > -1e-20f) { // >= zero, but values are ints casted to floats
             const float* src = &adj[t * dim];
             float* tgt = &grad[(e * m + m_) * dim];
 
@@ -3175,7 +3175,7 @@ __global__ void gBalancedMoeNormalizeGateWithMask(float *out,
       for(int tid = 0; tid < exp; tid += blockDim.x) {
         int e = tid + threadIdx.x;
         if(e < exp) {
-          if(mask[t * exp + e] > -0.5f) {
+          if(mask[t * exp + e] > -1e-20f) {
             atomicAdd(norm + t, in[t * exp + e]);
           }
         }
@@ -3204,7 +3204,7 @@ __global__ void gBalancedMoeNormalizeGateWithMask(float *out,
       for(int tid = 0; tid < exp; tid += blockDim.x) {
         int e = tid + threadIdx.x;
         if(e < exp) {
-          if(mask[t * exp + e] > -0.5f) {
+          if(mask[t * exp + e] > -1e-20f) {
             int m_ = (int)mask[t * exp + e];
             // MYASSERT(fabs(norm[t]) < 1e-20, "Gate: norm[t] == 0\n");
             out[e * m + m_] = in[t * exp + e] / norm[t];
@@ -3256,7 +3256,7 @@ __global__ void gBalancedMoeNormalizeGateWithMaskGrad(float* grad,
       for(int tid = 0; tid < exp; tid += blockDim.x) {
         int e = tid + threadIdx.x;
         if(e < exp) {
-          if(mask[t * exp + e] > -0.5f) {
+          if(mask[t * exp + e] > -1e-20f) {
             atomicAdd(norm + t, in[t * exp + e]);
           }
         }
@@ -3267,7 +3267,7 @@ __global__ void gBalancedMoeNormalizeGateWithMaskGrad(float* grad,
       for(int tid = 0; tid < exp; tid += blockDim.x) {
         int e = tid + threadIdx.x;
         if(e < exp) {
-          if (mask[t * exp + e] > -0.5f) {
+          if (mask[t * exp + e] > -1e-20f) {
             int m_ = (int)mask[t * exp + e];
             for(int egrad = 0; egrad < exp; ++egrad) {
               // MYASSERT(fabs(norm[t]) < 1e-20, "GateGrad: norm[t] == 0\n");

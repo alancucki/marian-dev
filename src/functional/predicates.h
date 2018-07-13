@@ -105,15 +105,15 @@ BINARY(And, operator&&, x&& y);
 BINARY(Or, operator||, x || y);
 
 template <typename T>
-__HDI__ T sgn(T val) {
+__HDI__ T sgn_(T val) {
   return (float(0) < val) - (val < float(0));
 }
 
-UNARY(Sgn, sgn, sgn(x));
+UNARY(Sgn, sgn, sgn_(x));
 
 BINARY(Pow, pow, pow(x, y));
 
-BINARY(Clip, clip, fabs(x) >= y ? sgn(x) * y : x);
+BINARY(Clip, clip, fabs(x) >= y ? sgn_(x) * y : x);
 BINARY(Bump, bump, fabs(x) >= y ? 0.f : 1.f);
 
 UNARY(sReLU, ReLU, x > 0.f ? x : 0.f);

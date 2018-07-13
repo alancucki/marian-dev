@@ -1300,4 +1300,39 @@ protected:
   int width_;
   bool isEven_;
 };
+
+class SignumNodeOp : public UnaryNodeOp {
+public:
+  SignumNodeOp(Expr x) : UnaryNodeOp(x) {}
+
+  // NodeOps forwardOps() {
+  //   return {NodeOp(Sign(val_, child(0)->val()))};
+  // }
+  NodeOps forwardOps() {
+    using namespace functional;
+    return {NodeOp(Element(_1 = sgn(_2), val_, child(0)->val()))};
+  }
+
+  const std::string type() { return "signum"; }
+};
+
+class AbsNodeOp : public UnaryNodeOp {
+public:
+  AbsNodeOp(Expr x) : UnaryNodeOp(x) {}
+
+  // NodeOps forwardOps() {
+  //   return {NodeOp(Sign(val_, child(0)->val()))};
+  // }
+  NodeOps forwardOps() {
+    using namespace functional;
+    return {NodeOp(Element(_1 = abs(_2), val_, child(0)->val()))};
+  }
+
+  NodeOps backwardOps() {
+    using namespace functional;
+    return {NodeOp(Add(sgn(_2) * _1, child(0)->grad(), adj_, child(0)->val()))};
+  }
+
+  const std::string type() { return "abs"; }
+};
 }
