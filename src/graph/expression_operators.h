@@ -35,7 +35,6 @@ Expr log(Expr a);
 Expr exp(Expr a);
 
 Expr clip(Expr a, float c);
-Expr fullclip(Expr a, float c);
 
 Expr operator-(Expr a);
 

@@ -265,6 +265,7 @@ public:
       if(v->marked_for_debug()) {
         std::cerr << "Debug: " << v->debug_message() << " op=" << v->type() << std::endl;
         std::cerr << v->val()->debug() << std::endl;
+        // std::cerr << v->val()->debug(true) << std::endl;  // NOTE Prints full matrices
       }
 
       // dumpAndExit = (dumpAndExit || gpu::IsNan(v->val()));
