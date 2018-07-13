@@ -42,6 +42,13 @@ EncoderDecoder::EncoderDecoder(Ptr<Options> options)
   modelFeatures_.insert("transformer-postprocess");
   modelFeatures_.insert("transformer-postprocess-emb");
   modelFeatures_.insert("transformer-decoder-autoreg");
+
+  modelFeatures_.insert("mixofexperts-enc-layers");
+  modelFeatures_.insert("mixofexperts-dec-layers");
+  modelFeatures_.insert("mixofexperts-layer-type");
+  modelFeatures_.insert("mixofexperts-dim-hid");
+  modelFeatures_.insert("mixofexperts-num-experts");
+  modelFeatures_.insert("mixofexperts-sel-experts");
 }
 
 std::vector<Ptr<EncoderBase>>& EncoderDecoder::getEncoders() {

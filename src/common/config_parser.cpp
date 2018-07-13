@@ -370,8 +370,10 @@ void ConfigParser::addOptionsModel(po::options_description& desc) {
      "Operation after transformer embedding layer: d = dropout, a = add, n = normalize")
     ("transformer-postprocess", po::value<std::string>()->default_value("dan"),
      "Operation after each transformer layer: d = dropout, a = add, n = normalize")
-    ("mixofexperts-layer-index", po::value<int>()->default_value(-1),
-     "MoE layer index in the decoder (1-based)")
+    ("mixofexperts-enc-layers", po::value<std::vector<int>>()->default_value({}, "")->multitoken(),
+     "MoE layer indexes in the encoder (1-based)")
+    ("mixofexperts-dec-layers", po::value<std::vector<int>>()->default_value({}, "")->multitoken(),
+     "MoE layer indexes in the decoder (1-based)")
     ("mixofexperts-layer-type", po::value<std::string>()->default_value("balanced_moe"),
      "MoE type: balanced_moe, large_attn")
     ("mixofexperts-dim-hid", po::value<int>()->default_value(1024),
@@ -892,7 +894,8 @@ void ConfigParser::parseOptions(int argc, char** argv, bool doValidate) {
   SET_OPTION("transformer-aan-nogate", bool);
   SET_OPTION("transformer-decoder-autoreg", std::string);
 
-  SET_OPTION("mixofexperts-layer-index", int);
+  SET_OPTION("mixofexperts-enc-layers", std::vector<int>);
+  SET_OPTION("mixofexperts-dec-layers", std::vector<int>);
   SET_OPTION("mixofexperts-layer-type", std::string);
   SET_OPTION("mixofexperts-dim-hid", int);
   SET_OPTION("mixofexperts-num-experts", int);

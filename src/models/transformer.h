@@ -759,11 +759,30 @@ public:
                              layerMask,
                              inference_);
 
-      layer = LayerFFN(graph,
-                       options_,
-                       prefix_ + "_l" + std::to_string(i) + "_ffn",
-                       layer,
-                       inference_);
+      std::vector<int> expLayers = opt<std::vector<int>>("mixofexperts-enc-layers");
+      if(std::find(expLayers.begin(), expLayers.end(), i) != expLayers.end()) {
+
+        // std::cout << "EXPERT ENC LAYERS FOUND AT " << i << std::endl;
+        if(opt<std::string>("mixofexperts-layer-type") == "balanced_moe") {
+          layer = LayerStrictlyBalancedMoE(graph,
+                                           options_,
+                                           prefix_ + "_l" + std::to_string(i) + "_moebalanced",
+                                           layer,
+                                           inference_);
+        } else if(opt<std::string>("mixofexperts-layer-type") == "large-attn") {
+          // TODO
+          ABORT("Not implemented");
+        } else {
+          ABORT("Unknown value for enhanced layer type");
+        }
+
+      } else {
+        layer = LayerFFN(graph,
+                         options_,
+                         prefix_ + "_l" + std::to_string(i) + "_ffn",
+                         layer,
+                         inference_);
+      }
     }
 
     // restore organization of batch and time steps. This is currently required
@@ -957,7 +976,10 @@ public:
         }
       }
 
-      if(opt<int>("mixofexperts-layer-index") == i) {
+
+      std::vector<int> expLayers = opt<std::vector<int>>("mixofexperts-dec-layers");
+      // XXX Backward compatibility
+      if(std::find(expLayers.begin(), expLayers.end(), i) != expLayers.end()) {
         if(opt<std::string>("mixofexperts-layer-type") == "balanced_moe") {
           query = LayerStrictlyBalancedMoE(graph,
                                            options_,
