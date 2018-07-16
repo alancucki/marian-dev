@@ -69,6 +69,8 @@ struct Chainable {
   virtual void init_dependent() {}
   virtual void set_zero_adjoint() {}
 
+  virtual void set_zero_grad() = 0;
+
   virtual bool trainable() = 0;
   virtual void setTrainable(bool) = 0;
 

@@ -403,6 +403,22 @@ public:
       ABORT("NaNs spotted (tesnors dumped)\n");
     }
 
+    ///////////////////////////////////////////////////////////////////////////////
+    ///////////////////////////////////////////////////////////////////////////////
+    std::string gateStr = "moebalanced_GateW";
+    std::string thresholdStr = "moebalanced_MoeThreshold";
+
+    for(auto&& vit = nodesBackward_.rbegin(); vit != nodesBackward_.rend(); ++vit) {
+      auto v = *vit;
+      if (v->name().find(gateStr) == std::string::npos && v->name().find(thresholdStr) == std::string::npos) {
+        v->set_zero_adjoint();
+        v->set_zero_grad();
+      }
+    }
+    ///////////////////////////////////////////////////////////////////////////////
+    ///////////////////////////////////////////////////////////////////////////////
+
+
     // Clear
     while(!nodesBackward_.empty()) {
       auto v = nodesBackward_.back();
