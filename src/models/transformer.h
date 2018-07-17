@@ -458,7 +458,11 @@ public:
 
     // (TOKENS, EXPERTS)
     auto gate = dot(inputFlat, gateW);
-    auto trGate = transpose(gate);
+    auto soft = softmax(gate);
+
+    bool topkOverSoftmax = options->get<bool>("mixofexperts-topk-over-softmax");
+    auto trGate = (topkOverSoftmax ? transpose(soft) : transpose(gate));
+
     // gate->debug("GATE" + gate->label());
     // trGate->debug("TRGATE" + trGate->label());
     auto trTopMask = top_k_mask(trGate, m);
@@ -509,7 +513,6 @@ public:
     }
 
     // (TOKENS, EXPERTS)
-    auto soft = softmax(gate);
     auto topLogits = balanced_moe_normalize_gate_with_mask(soft, topMask, m);
 
     // auto weightTest = topLogits;
