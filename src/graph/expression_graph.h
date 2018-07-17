@@ -405,7 +405,8 @@ public:
 
     ///////////////////////////////////////////////////////////////////////////////
     ///////////////////////////////////////////////////////////////////////////////
-    std::string gateStr = "moebalanced_GateW";
+    //// XXX std::string gateStr = "moebalanced_GateW";
+    std::string gateStr = "STRING_THAT_IS_NOT_SUPPOSED_TO_MATCH";
     std::string thresholdStr = "moebalanced_MoeThreshold";
 
     for(auto&& vit = nodesBackward_.rbegin(); vit != nodesBackward_.rend(); ++vit) {
