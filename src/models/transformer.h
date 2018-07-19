@@ -719,6 +719,14 @@ public:
 
     auto embeddings = WordEmbeddings(graph, batch);
 
+    //////////////////////////////////////////////
+    auto weights = graph->constant({512, dimBatch},
+                                   inits::from_vector(batch->getDataWeights()));
+    weights = transpose(weights);
+    weights->setTrainable(false);
+    weights->debug(weights->label());
+    //////////////////////////////////////////////
+
     // embed the source words in the batch
     Expr batchEmbeddings, batchMask;
     std::tie(batchEmbeddings, batchMask)

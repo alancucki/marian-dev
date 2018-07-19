@@ -359,6 +359,9 @@ public:
       if(dataWeights_.size() != oldSize)
         width = batches_.back()->batchWidth();
 
+      // XXX XXX XXX XXX
+      width = 512; // For sentence embeddings; should be equal to dim-emb
+
       for(auto split : splits) {
         std::vector<float> ws(width * split->size(), 1.0f);
 
@@ -463,6 +466,12 @@ protected:
    * no alignment file provided.
    */
   size_t alignFileIdx_{0};
+
+  /**
+   * @brief Index of the file with float values (each line can be interpreted as a vector;
+   * zero means no file provided.
+   */
+  size_t floatFileIdx_{0};
 
   /**
    * @brief Helper function converting a line of text into words using the i-th

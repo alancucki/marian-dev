@@ -164,6 +164,17 @@ CorpusBase::CorpusBase(Ptr<Config> options, bool translate)
     paths_.emplace_back(path);
     files_.emplace_back(new InputFileStream(path));
   }
+
+  // if(training && options_->has("float-input")) {
+  //   auto path = options_->get<std::string>("float-input");
+
+  //   ABORT_IF(!boost::filesystem::exists(path), "Float file does not exist");
+  //   LOG(info, "[data] Using extra float input vectors from file {}", path);
+
+  //   floatFileIdx_ = paths_.size();
+  //   paths_.emplace_back(path);
+  //   files_.emplace_back(new InputFileStream(path));
+  // }
 }
 
 void CorpusBase::addWordsToSentenceTuple(const std::string& line,
@@ -240,7 +251,14 @@ void CorpusBase::addWeightsToBatch(Ptr<CorpusBatch> batch,
 
   auto sentenceLevel
       = options_->get<std::string>("data-weighting-type") == "sentence";
-  size_t size = sentenceLevel ? dimBatch : dimBatch * trgWords;
+  auto fixedLen
+      = options_->get<std::string>("data-weighting-type") == "dim-emb";
+  size_t size = dimBatch * trgWords;
+  if(sentenceLevel)
+    size = dimBatch;
+  else if(fixedLen)
+    size = dimBatch * options_->get<int>("dim-emb");
+
   std::vector<float> weights(size, 1.f);
 
   for(int b = 0; b < dimBatch; ++b) {
