@@ -146,4 +146,26 @@ private:
 
   void log();
 };
+
+class GlobalConfig {
+public:
+  static GlobalConfig& getInstance() {
+    static GlobalConfig obj;
+    return obj;
+  }
+
+  void setConfig(Ptr<Config> cfg) {
+    ABORT_IF(config_ != nullptr, "Global config can be set only once");
+    config_ = cfg;
+  }
+
+  Ptr<Config> getConfig() {
+    return config_;
+  }
+
+private:
+  Ptr<Config> config_;
+
+  GlobalConfig() {}
+};
 }

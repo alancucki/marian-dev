@@ -386,6 +386,8 @@ void ConfigParser::addOptionsModel(po::options_description& desc) {
      "MoE trains a vector of per-expert thresholds for batch-independent evaluation")
     ("mixofexperts-topk-over-softmax", po::value<bool>()->zero_tokens()->default_value(false),
      "")
+    ("train-only", po::value<std::vector<std::string>>()->default_value({}, "")->multitoken(),
+     "Train only selected layers")
 #ifdef CUDNN
     ("char-stride", po::value<int>()->default_value(5),
      "Width of max-pooling layer after convolution layer in char-s2s model")
@@ -904,6 +906,7 @@ void ConfigParser::parseOptions(int argc, char** argv, bool doValidate) {
   SET_OPTION("mixofexperts-sel-experts", int);
   SET_OPTION("mixofexperts-thresholds", bool);
   SET_OPTION("mixofexperts-topk-over-softmax", bool);
+  SET_OPTION("train-only", std::vector<std::string>);
 
 #ifdef CUDNN
   SET_OPTION("char-stride", int);

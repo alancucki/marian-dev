@@ -265,6 +265,7 @@ public:
       if(v->marked_for_debug()) {
         std::cerr << "Debug: " << v->debug_message() << " op=" << v->type() << std::endl;
         std::cerr << v->val()->debug() << std::endl;
+        // std::cerr << v->val()->debug(true) << std::endl;  // NOTE Prints full matrices
       }
 
       // dumpAndExit = (dumpAndExit || gpu::IsNan(v->val()));
@@ -401,6 +402,28 @@ public:
       file.close();
       ABORT("NaNs spotted (tesnors dumped)\n");
     }
+
+    ///////////////////////////////////////////////////////////////////////////////
+    ///////////////////////////////////////////////////////////////////////////////
+    GlobalConfig gcfg = GlobalConfig::getInstance();
+    auto cfg = gcfg.getConfig();
+    auto trainOnly = cfg->get<std::vector<std::string>>("train-only");
+
+    if(trainOnly.size() > 0) {
+      for(auto&& vit = nodesBackward_.rbegin(); vit != nodesBackward_.rend(); ++vit) {
+        auto v = *vit;
+        for(auto&& to : trainOnly) {
+          if(v->name() == to) {
+            break;
+          }
+          v->set_zero_adjoint();
+          v->set_zero_grad();
+        }
+      }
+    }
+    ///////////////////////////////////////////////////////////////////////////////
+    ///////////////////////////////////////////////////////////////////////////////
+
 
     // Clear
     while(!nodesBackward_.empty()) {

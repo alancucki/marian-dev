@@ -116,6 +116,8 @@ public:
 
   virtual Tensor& grad() { return adj_; };
 
+  virtual void set_zero_grad() { adj_->set(0.f); };
+
   virtual const Shape& shape() { return shape_; }
   virtual const Type& value_type() { return value_type_; }
 
