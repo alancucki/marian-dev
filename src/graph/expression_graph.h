@@ -405,15 +405,20 @@ public:
 
     ///////////////////////////////////////////////////////////////////////////////
     ///////////////////////////////////////////////////////////////////////////////
-    //// XXX std::string gateStr = "moebalanced_GateW";
-    std::string gateStr = "STRING_THAT_IS_NOT_SUPPOSED_TO_MATCH";
-    std::string thresholdStr = "moebalanced_MoeThreshold";
+    GlobalConfig gcfg = GlobalConfig::getInstance();
+    auto cfg = gcfg.getConfig();
+    auto trainOnly = cfg->get<std::vector<std::string>>("train-only");
 
-    for(auto&& vit = nodesBackward_.rbegin(); vit != nodesBackward_.rend(); ++vit) {
-      auto v = *vit;
-      if (v->name().find(gateStr) == std::string::npos && v->name().find(thresholdStr) == std::string::npos) {
-        v->set_zero_adjoint();
-        v->set_zero_grad();
+    if(trainOnly.size() > 0) {
+      for(auto&& vit = nodesBackward_.rbegin(); vit != nodesBackward_.rend(); ++vit) {
+        auto v = *vit;
+        for(auto&& to : trainOnly) {
+          if(v->name() == to) {
+            break;
+          }
+          v->set_zero_adjoint();
+          v->set_zero_grad();
+        }
       }
     }
     ///////////////////////////////////////////////////////////////////////////////

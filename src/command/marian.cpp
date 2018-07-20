@@ -17,6 +17,10 @@ int main(int argc, char** argv) {
   using namespace marian;
 
   auto options = New<Config>(argc, argv);
+
+  // Put Ptr into singleton to be globally accessible
+  GlobalConfig::getInstance().setConfig(options);
+
   auto devices = options->getDevices();
 
   if(options->get<bool>("multi-node")) {
