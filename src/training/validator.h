@@ -75,6 +75,9 @@ public:
       opts->set("mini-batch", options_->get<size_t>("valid-mini-batch"));
     opts->set("mini-batch-sort", "src");
 
+    opts->set("data-weighting", options_->get<std::string>("data-valid-weighting"));
+    opts->set("data-weighting-type", options_->get<std::string>("data-weighting-type"));
+
     // Create corpus
     auto validPaths = options_->get<std::vector<std::string>>("valid-sets");
     auto corpus = New<DataSet>(validPaths, vocabs_, opts);
@@ -145,6 +148,9 @@ protected:
     size_t words = 0;
 
     size_t batchId = 0;
+
+    if(options_->has("data-valid-weighting"))
+      batchGenerator->readWeightsFromFile(options_->get<std::string>("data-valid-weighting"));
 
     {
       ThreadPool threadPool(graphs.size(), graphs.size());
@@ -259,6 +265,9 @@ public:
     // Generate batches
     auto batchGenerator = New<BatchGenerator<data::Corpus>>(corpus, opts);
     batchGenerator->prepare(false);
+
+    if(options_->has("data-valid-weighting"))
+      batchGenerator->readWeightsFromFile(options_->get<std::string>("data-valid-weighting"));
 
     // Create scorer
     auto model = options_->get<std::string>("model");

@@ -404,6 +404,7 @@ public:
     Reference: https://github.com/tensorflow/tensor2tensor/blob/master/tensor2tensor/utils/expert_utils.py
   */
   Expr LayerStrictlyBalancedMoE(Ptr<ExpressionGraph> graph,
+                                Ptr<data::CorpusBatch> batch,
                                 Ptr<Options> options,
                                 std::string prefix,
                                 Expr input,
@@ -421,12 +422,14 @@ public:
     bool useThresholds = options->get<bool>("mixofexperts-thresholds");
 
     int dimModel = input->shape()[-1];
+    int dimTime = input->shape()[-2];
+    int dimBatch = input->shape()[-3];
     int beamSize = input->shape()[-4];
-    int numTokens = input->shape()[-3] * input->shape()[-2] * beamSize;
+    int numTokens = beamSize * dimBatch * dimTime;
     int m = (int)std::ceil(1.0 * k * numTokens / numExperts);
 
     if(useThresholds && inference) {
-      m = std::min(numTokens, 240);
+      m = std::min(numTokens, 4096);
       // std::cout << input->shape() << " INPUT SHAPE\n";
       // m = (m < 10 ? 10 : m);
       // m = (m < 16 ? 2*m : m + 10); // XXX Set a generous value for m
@@ -451,13 +454,84 @@ public:
     // (TOKENS, DIM)
     auto inputFlat = reshape(inputPre, {numTokens, dimModel});
 
+    // auto input2 = inputFlat * inputFlat;
+    // input2->setTrainable(false);
+    // auto input_len = sum(sqrt(sum(input2, {1})), {0}) / input2->shape()[0];
+    // input_len->debug("input_len");
+
     // Compute the gate
-    auto gateW = graph->param(
-        prefix + "_GateW", {dimModel, numExperts},
-        inits::glorot_uniform);
+    Expr gate;
+
+    // Use sentence embeddings?
+    bool sentEmbConcatGate = options->get<bool>("mixofexperts-sentemb-concat-gate");
+    bool sentEmbOnlyGate = options->get<bool>("mixofexperts-sentemb-only-gate");
+    bool regularGate = !sentEmbConcatGate && !sentEmbOnlyGate;
+
+    if(regularGate || sentEmbConcatGate) {
+      auto gateW = graph->param(
+          prefix + "_GateW", {dimModel, numExperts},
+          inits::glorot_uniform);
+      // (TOKENS, EXPERTS)
+      gate = dot(inputFlat, gateW);
+    }
+
+    if(sentEmbOnlyGate || sentEmbConcatGate) {
+      float sentEmbScale = options->get<float>("sentemb-scale");
+      auto sentEmb = graph->constant(
+          {dimModel, dimBatch}, inits::from_vector(batch->getDataWeights()));
+      sentEmb = transpose(sentEmb) * sentEmbScale;
+      sentEmb = reshape(sentEmb, {dimBatch, dimModel});
+      auto gateWsentEmb = graph->param(
+          prefix + "_GateWsentEmb", {dimModel, numExperts},
+          inits::glorot_uniform);
+
+      // auto emb2 = sentEmb * sentEmb;
+      // emb2->setTrainable(false);
+      // auto emb_len = sum(sqrt(sum(emb2, {1})), {0}) / emb2->shape()[0];
+      // emb_len->debug("emb_len");
+
+      // (BSZ, EXPERTS)
+      auto gateEmb = dot(sentEmb, gateWsentEmb);
+      // if(inference) {
+      //   sentEmb->debug("INFERENCE: sent emb");
+      //   gateEmb->debug("INFERENCE: raw gate emb");
+      // } else {
+      //   // sentEmb->debug("sent emb");
+      // }
+      // else
+      //     gateEmb->debug("raw gate emb");
+
+      // (BSZ, EXPERTS * TIME)
+      gateEmb = repeat(gateEmb, dimTime, {1});
+      // (BSZ * TIME, EXPERTS)
+      gateEmb = reshape(gateEmb, {dimBatch * dimTime, numExperts});
+
+      /// // (BSZ * TIME, EXPERTS)
+      /// gateEmb = repeat(gateEmb, dimTime, {0});
+      // if(inference)
+      //     gateEmb->debug("INFERENCE: gate emb");
+      // else
+      //     gateEmb->debug("gate emb");
+
+      ///// // (TOKENS, EXPERTS)
+      gateEmb = repeat(gateEmb, beamSize, {0}); // XXX I did not test that
+
+      ///// // (TOKENS, EXPERTS)
+      // gateEmb = repeat(reshape(gateEmb, {1, -1}), beamSize, {0});
+      // gateEmb->debug("repeated");
+      // gateEmb = reshape(gateEmb, {-1, numExperts});
+      // if(inference)
+      //     gateEmb->debug("INFERENCE: gate emb corrected for beam size");
+      // else
+      //     gateEmb->debug("gaemb corrected for beam size");
+
+      // gateEmb->debug("gateEmb"); // XXX
+      // std::cout << "sentemb-gate (concat? " << sentEmbConcatGate << ")\n"; // XXX
+
+      gate = sentEmbConcatGate ? gate + gateEmb : gateEmb;
+    }
 
     // (TOKENS, EXPERTS)
-    auto gate = dot(inputFlat, gateW);
     auto soft = softmax(gate);
 
     bool topkOverSoftmax = options->get<bool>("mixofexperts-topk-over-softmax");
@@ -472,10 +546,9 @@ public:
     trTopMask->setTrainable(false);
     topMask->setTrainable(false);
 
-    // XXX Put it under the 'if' statement
-    auto thresh = graph->param(prefix + "_MoeThreshold", {1, numExperts}, inits::from_value(0.f));
-    auto maskThreshold = clip(signum(gate - thresh) - 0.5, 0.5) + 0.5;
     if(useThresholds) {
+      auto thresh = graph->param(prefix + "_MoeThreshold", {1, numExperts}, inits::from_value(0.f));
+      auto maskThreshold = clip(signum(gate - thresh) - 0.5, 0.5) + 0.5;
       maskThreshold->setTrainable(false);
       if(inference) {
         // Set to zero any excess indices, whose corresponding value is below threshold,
@@ -532,6 +605,9 @@ public:
                            inits::glorot_uniform);
     auto exp1 = bdot(sliced, W1);
     auto exp2 = relu(exp1);
+    float ffnDropProb
+      = inference ? 0 : options->get<float>("transformer-dropout-ffn");
+    exp2 = dropout(exp2, ffnDropProb);
     auto expOut = bdot(exp2, W2);
     auto weighted = expOut * reshape(topLogits, {numExperts, m, 1});
  
@@ -719,14 +795,6 @@ public:
 
     auto embeddings = WordEmbeddings(graph, batch);
 
-    //////////////////////////////////////////////
-    auto weights = graph->constant({512, dimBatch},
-                                   inits::from_vector(batch->getDataWeights()));
-    weights = transpose(weights);
-    weights->setTrainable(false);
-    weights->debug(weights->label());
-    //////////////////////////////////////////////
-
     // embed the source words in the batch
     Expr batchEmbeddings, batchMask;
     std::tie(batchEmbeddings, batchMask)
@@ -750,6 +818,35 @@ public:
     auto layer = TransposeTimeBatch(scaledEmbeddings); // [-4: beam depth=1, -3: batch size, -2: max length, -1: vector dim]
     auto layerMask
         = reshape(TransposeTimeBatch(batchMask), {1, dimBatch, 1, dimSrcWords}); // [-4: beam depth=1, -3: batch size, -2: vector dim=1, -1: max length]
+
+
+    ////////////////////////////////////////////
+    // Need shape {bsz, 1, 1, dimEmb}
+    if(opt<bool>("sentemb-input")) {
+      float sentEmbScale = opt<float>("sentemb-scale");
+      auto sentEmb = graph->constant(
+          {dimEmb, dimBatch}, inits::from_vector(batch->getDataWeights()));
+      sentEmb = transpose(sentEmb) * sentEmbScale;
+      sentEmb = reshape(sentEmb, {1, dimBatch, 1, dimEmb});
+
+      // if(inference_)
+      //   sentEmb->debug("sentemb");
+
+      // std::cout << "Adding sent embs with scale " << sentEmbScale << "\n";
+      // auto layer2 = layer * layer;
+      // layer2->setTrainable(false);
+      // auto mean_len = sum(sum(sum(sqrt(sum(layer2, {3})), {2}), {1}), {0}) / (layer->shape()[0] * layer->shape()[1] * layer->shape()[2]);
+      // mean_len->setTrainable(false);
+      // mean_len->debug("mean_len");
+      // auto sentEmb2 = sentEmb * sentEmb;
+      // sentEmb2->setTrainable(false);
+      // auto my_len = sum(sum(sum(sqrt(sum(sentEmb2, {3})), {2}), {1}), {0}) / (sentEmb->shape()[0] * sentEmb->shape()[1] * sentEmb->shape()[2]);
+      // my_len->setTrainable(false);
+      // my_len->debug("sentemb_len");
+
+      layer = layer + sentEmb;
+    }
+    ////////////////////////////////////////////
 
     auto opsEmb = opt<std::string>("transformer-postprocess-emb");
 
@@ -776,6 +873,7 @@ public:
         // std::cout << "EXPERT ENC LAYERS FOUND AT " << i << std::endl;
         if(opt<std::string>("mixofexperts-layer-type") == "balanced_moe") {
           layer = LayerStrictlyBalancedMoE(graph,
+                                           batch,
                                            options_,
                                            prefix_ + "_l" + std::to_string(i) + "_moebalanced",
                                            layer,
@@ -993,6 +1091,7 @@ public:
       if(std::find(expLayers.begin(), expLayers.end(), i) != expLayers.end()) {
         if(opt<std::string>("mixofexperts-layer-type") == "balanced_moe") {
           query = LayerStrictlyBalancedMoE(graph,
+                                           state->getBatch(),
                                            options_,
                                            prefix_ + "_l" + std::to_string(i) + "_moebalanced",
                                            query,

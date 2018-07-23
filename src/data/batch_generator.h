@@ -8,6 +8,8 @@
 #include <queue>
 
 #include "common/config.h"
+#include "common/utils.h" // Split()
+#include "common/file_stream.h" // InputFileStream
 #include "data/batch_stats.h"
 #include "data/rng_engine.h"
 #include "data/vocab.h"
@@ -44,6 +46,8 @@ private:
   mutable std::mutex loadMutex_;
   mutable std::condition_variable loadCondition_;
   bool loadReady_{true};
+
+  std::vector<float> weightsData_;
 
   void fillBatches(bool shuffle = true) {
     typedef typename sample::value_type Item;
@@ -96,6 +100,7 @@ private:
 
     std::vector<BatchPtr> tempBatches;
 
+    int numSamples = 0;
     // while there are sentences in the queue
     while(!maxiBatch->empty()) {
       // push item onto batch
@@ -135,6 +140,12 @@ private:
       // if batch has desired size create a real batch
       if(makeBatch) {
         tempBatches.push_back(data_->toBatch(batchVector));
+        if(weightsData_.size() > 0) {
+          std::copy(weightsData_.begin() + numSamples * 512, // XXX
+                    weightsData_.begin() + (numSamples + batchVector.size()) * 512,
+                    std::back_inserter(tempBatches.back()->dataWeights_));
+        }
+        numSamples += batchVector.size();
 
         // prepare for next batch
         batchVector.clear();
@@ -236,6 +247,22 @@ public:
       next();
 
     return true;
+  }
+
+  void readWeightsFromFile(const std::string path) {
+
+    auto weightsFile = new InputFileStream(path);
+    weightsData_.clear();
+
+    std::string line;
+    while(std::getline((std::istream&)*weightsFile, line)) {
+      auto elements = Split(line, " ");
+      if(!elements.empty()) {
+        for(auto& e : elements)
+          weightsData_.emplace_back(std::stof(e));
+      }
+    }
+    delete weightsFile;
   }
 };
 

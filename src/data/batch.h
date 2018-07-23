@@ -25,7 +25,15 @@ public:
   void setSentenceIds(const std::vector<size_t>& ids) { sentenceIds_ = ids; }
 
   virtual void setGuidedAlignment(const std::vector<float>&) = 0;
-  virtual void setDataWeights(const std::vector<float>&) = 0;
+  // virtual void setDataWeights(const std::vector<float>&) = 0;
+
+  // Previously were members of CorpusBatch
+  std::vector<float> dataWeights_;
+
+  std::vector<float>& getDataWeights() { return dataWeights_; }
+  void setDataWeights(const std::vector<float>& weights) {
+    dataWeights_ = weights;
+  }
 
 protected:
   std::vector<size_t> sentenceIds_;

@@ -186,7 +186,7 @@ public:
           LOG(info,
               // TODO: change Cost back to {:.2f}
               "Ep. {} : Up. {} : Sen. {} : Cost {:.8f} * {} after {} : Time {} : {:.2f} "
-              "words/s : L.r. {:.4e}",
+              "words/s : {} words/batch : L.r. {:.4e}",
               state_->epochs,
               state_->batches,
               state_->samplesEpoch,
@@ -194,41 +194,45 @@ public:
               state_->labelsTotal,
               timer.format(2, "%ws"),
               state_->wordsDisp / std::stof(timer.format(5, "%w")),
+              state_->labelsTotal / state_->batches,
               state_->eta);
         } else {
           LOG(info,
               "Ep. {} : Up. {} : Sen. {} : Cost {:.8f} * {} after {} : Time {} : {:.2f} "
-              "words/s",
+              "words/s : {} words/batch",
               state_->epochs,
               state_->batches,
               state_->samplesEpoch,
               state_->costSum / state_->costCount, state_->costCount,
               state_->labelsTotal,
               timer.format(2, "%ws"),
-              state_->wordsDisp / std::stof(timer.format(5, "%w")));
+              state_->wordsDisp / std::stof(timer.format(5, "%w")),
+              state_->labelsTotal / state_->batches);
         }
       } else {
         if(options_->get<bool>("lr-report")) {
           LOG(info,
               "Ep. {} : Up. {} : Sen. {} : Cost {:.2f} : Time {} : {:.2f} "
-              "words/s : L.r. {:.4e}",
+              "words/s : {} words/batch : L.r. {:.4e}",
               state_->epochs,
               state_->batches,
               state_->samplesEpoch,
               state_->costSum / state_->costCount,
               timer.format(2, "%ws"),
               state_->wordsDisp / std::stof(timer.format(5, "%w")),
+              state_->labelsTotal / state_->batches,
               state_->eta);
         } else {
           LOG(info,
               "Ep. {} : Up. {} : Sen. {} : Cost {:.2f} : Time {} : {:.2f} "
-              "words/s",
+              "words/s : {} words/batch",
               state_->epochs,
               state_->batches,
               state_->samplesEpoch,
               state_->costSum / state_->costCount,
               timer.format(2, "%ws"),
-              state_->wordsDisp / std::stof(timer.format(5, "%w")));
+              state_->wordsDisp / std::stof(timer.format(5, "%w")),
+              state_->labelsTotal / state_->batches);
         }
       }
       // progress heartbeat for MS-internal Philly compute cluster

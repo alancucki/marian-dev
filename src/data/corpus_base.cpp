@@ -155,6 +155,7 @@ CorpusBase::CorpusBase(Ptr<Config> options, bool translate)
   }
 
   if(training && options_->has("data-weighting")) {
+    //  || (!training && options_->has("data-valid-weighting"))) {
     auto path = options_->get<std::string>("data-weighting");
 
     ABORT_IF(!boost::filesystem::exists(path), "Weight file does not exist");
@@ -252,7 +253,7 @@ void CorpusBase::addWeightsToBatch(Ptr<CorpusBatch> batch,
   auto sentenceLevel
       = options_->get<std::string>("data-weighting-type") == "sentence";
   auto fixedLen
-      = options_->get<std::string>("data-weighting-type") == "dim-emb";
+      = options_->get<std::string>("data-weighting-type") == "sentemb-no-weighting";
   size_t size = dimBatch * trgWords;
   if(sentenceLevel)
     size = dimBatch;

@@ -385,9 +385,17 @@ void ConfigParser::addOptionsModel(po::options_description& desc) {
     ("mixofexperts-thresholds", po::value<bool>()->zero_tokens()->default_value(false),
      "MoE trains a vector of per-expert thresholds for batch-independent evaluation")
     ("mixofexperts-topk-over-softmax", po::value<bool>()->zero_tokens()->default_value(false),
-     "")
+     "Apply softmax before choosing top k tokens for each expert")
+    ("mixofexperts-sentemb-concat-gate", po::value<bool>()->zero_tokens()->default_value(false),
+     "Concatenate input vector and sent emb when computing gate (requires sentence emb file)")
+    ("mixofexperts-sentemb-only-gate", po::value<bool>()->zero_tokens()->default_value(false),
+     "Compute gate only with sent emb (requires sentence emb file)")
     ("train-only", po::value<std::vector<std::string>>()->default_value({}, "")->multitoken(),
      "Train only selected layers")
+    ("sentemb-scale", po::value<float>()->default_value(1.f),
+     "Add rescaled sentence embs to input tokens (-1 turns it off, requires sentence emb file)")
+    ("sentemb-input", po::value<bool>()->zero_tokens()->default_value(false),
+     "Add sentence embedding to input embeddings")
 #ifdef CUDNN
     ("char-stride", po::value<int>()->default_value(5),
      "Width of max-pooling layer after convolution layer in char-s2s model")
@@ -647,6 +655,9 @@ void ConfigParser::addOptionsValid(po::options_description& desc) {
       "Allow unknown words to appear in output")
     ("n-best", po::value<bool>()->zero_tokens()->default_value(false),
       "Generate n-best list")
+
+    ("data-valid-weighting", po::value<std::string>()->default_value("sentence"),
+     "File with sentence embeddings for valid set")
   ;
   // clang-format on
   desc.add(valid);
@@ -906,6 +917,11 @@ void ConfigParser::parseOptions(int argc, char** argv, bool doValidate) {
   SET_OPTION("mixofexperts-sel-experts", int);
   SET_OPTION("mixofexperts-thresholds", bool);
   SET_OPTION("mixofexperts-topk-over-softmax", bool);
+  SET_OPTION("mixofexperts-sentemb-concat-gate", bool);
+  SET_OPTION("mixofexperts-sentemb-only-gate", bool);
+
+  SET_OPTION("sentemb-scale", float);
+  SET_OPTION("sentemb-input", bool);
   SET_OPTION("train-only", std::vector<std::string>);
 
 #ifdef CUDNN
@@ -1048,6 +1064,8 @@ void ConfigParser::parseOptions(int argc, char** argv, bool doValidate) {
     SET_OPTION("word-penalty", float);
     SET_OPTION("allow-unk", bool);
     SET_OPTION("n-best", bool);
+
+    SET_OPTION("data-valid-weighting", std::string);
   }
 
   SET_OPTION("workspace", size_t);

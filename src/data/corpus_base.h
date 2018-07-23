@@ -206,7 +206,11 @@ class CorpusBatch : public Batch {
 private:
   std::vector<Ptr<SubBatch>> batches_;
   std::vector<float> guidedAlignment_;
-  std::vector<float> dataWeights_;
+
+  // std::vector<float>& getDataWeights() { return dataWeights_; }
+  // void setDataWeights(const std::vector<float>& weights) {
+  //   dataWeights_ = weights;
+  // }
 
 public:
   CorpusBatch(const std::vector<Ptr<SubBatch>>& batches) : batches_(batches) {}
@@ -384,11 +388,6 @@ public:
   std::vector<float>& getGuidedAlignment() { return guidedAlignment_; }
   void setGuidedAlignment(const std::vector<float>& aln) {
     guidedAlignment_ = aln;
-  }
-
-  std::vector<float>& getDataWeights() { return dataWeights_; }
-  void setDataWeights(const std::vector<float>& weights) {
-    dataWeights_ = weights;
   }
 
   /**

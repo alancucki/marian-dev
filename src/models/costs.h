@@ -37,6 +37,9 @@ public:
                     || (options_->has("dynamic-weighting")
                         && options_->get<bool>("dynamic-weighting")
                         && !inference_);
+    toBeWeighted_ = toBeWeighted_
+                    && (options_->get<std::string>("data-weighting-type") != "sentemb-no-weighting");
+
     if(toBeWeighted_)
       weighter_ = WeightingFactory(options_);
   }
