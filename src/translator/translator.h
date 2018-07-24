@@ -77,6 +77,9 @@ public:
   void run() {
     data::BatchGenerator<data::Corpus> bg(corpus_, options_);
 
+    if(options_->has("data-valid-weighting"))
+      bg.readWeightsFromFile(options_->get<std::string>("data-valid-weighting"));
+
     auto devices = options_->getDevices();
 
     ThreadPool threadPool(devices.size(), devices.size());
@@ -170,6 +173,9 @@ public:
   std::vector<std::string> run(const std::vector<std::string>& inputs) {
     auto corpus_ = New<data::TextInput>(inputs, srcVocabs_, options_);
     data::BatchGenerator<data::TextInput> bg(corpus_, options_);
+
+    if(options_->has("data-valid-weighting"))
+      bg.readWeightsFromFile(options_->get<std::string>("data-valid-weighting"));
 
     auto collector = New<StringCollector>();
     size_t batchId = 0;

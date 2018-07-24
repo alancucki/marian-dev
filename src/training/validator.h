@@ -75,8 +75,11 @@ public:
       opts->set("mini-batch", options_->get<size_t>("valid-mini-batch"));
     opts->set("mini-batch-sort", "src");
 
-    opts->set("data-weighting", options_->get<std::string>("data-valid-weighting"));
-    opts->set("data-weighting-type", options_->get<std::string>("data-weighting-type"));
+    if(options_->has("data-valid-weighting")) {
+      // XXX Unnecessary?
+      opts->set("data-weighting", options_->get<std::string>("data-valid-weighting"));
+      opts->set("data-weighting-type", options_->get<std::string>("data-weighting-type"));
+    }
 
     // Create corpus
     auto validPaths = options_->get<std::vector<std::string>>("valid-sets");

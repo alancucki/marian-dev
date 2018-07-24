@@ -575,8 +575,8 @@ void ConfigParser::addOptionsTraining(po::options_description& desc) {
      "Weight for guided alignment cost")
     ("data-weighting", po::value<std::string>(),
      "File with sentence or word weights")
-    ("data-weighting-type", po::value<std::string>()->default_value("sentence"),
-     "Processing level for data weighting. Possible values: sentence, word")
+    ("data-weighting-type", po::value<std::string>(),
+     "Processing level for data weighting. Possible values: sentence, word, sentemb-no-weighting")
 
     //("drop-rate", po::value<double>()->default_value(0),
     // "Gradient drop ratio (read: https://arxiv.org/abs/1704.05021)")
@@ -656,7 +656,7 @@ void ConfigParser::addOptionsValid(po::options_description& desc) {
     ("n-best", po::value<bool>()->zero_tokens()->default_value(false),
       "Generate n-best list")
 
-    ("data-valid-weighting", po::value<std::string>()->default_value("sentence"),
+    ("data-valid-weighting", po::value<std::string>(),
      "File with sentence embeddings for valid set")
   ;
   // clang-format on
@@ -1000,7 +1000,7 @@ void ConfigParser::parseOptions(int argc, char** argv, bool doValidate) {
     SET_OPTION("guided-alignment-cost", std::string);
     SET_OPTION("guided-alignment-weight", double);
     SET_OPTION_NONDEFAULT("data-weighting", std::string);
-    SET_OPTION("data-weighting-type", std::string);
+    SET_OPTION_NONDEFAULT("data-weighting-type", std::string);
 
     // SET_OPTION("drop-rate", double);
     SET_OPTION_NONDEFAULT("embedding-vectors", std::vector<std::string>);
@@ -1065,7 +1065,7 @@ void ConfigParser::parseOptions(int argc, char** argv, bool doValidate) {
     SET_OPTION("allow-unk", bool);
     SET_OPTION("n-best", bool);
 
-    SET_OPTION("data-valid-weighting", std::string);
+    SET_OPTION_NONDEFAULT("data-valid-weighting", std::string);
   }
 
   SET_OPTION("workspace", size_t);
