@@ -429,7 +429,7 @@ public:
     int m = (int)std::ceil(1.0 * k * numTokens / numExperts);
 
     if(useThresholds && inference) {
-      m = std::min(numTokens, 4096);
+      m = std::min(numTokens, 420);
       // std::cout << input->shape() << " INPUT SHAPE\n";
       // m = (m < 10 ? 10 : m);
       // m = (m < 16 ? 2*m : m + 10); // XXX Set a generous value for m
@@ -481,6 +481,14 @@ public:
           {dimModel, dimBatch}, inits::from_vector(batch->getDataWeights()));
       sentEmb = transpose(sentEmb) * sentEmbScale;
       sentEmb = reshape(sentEmb, {dimBatch, dimModel});
+
+      if(options->get<bool>("sentemb-projection")) {
+        auto projW = graph->param(
+            prefix + "_SentEmbProjW", {dimModel, dimModel},
+            inits::glorot_uniform);
+        sentEmb = dot(sentEmb, projW);
+      }
+
       auto gateWsentEmb = graph->param(
           prefix + "_GateWsentEmb", {dimModel, numExperts},
           inits::glorot_uniform);
@@ -604,11 +612,25 @@ public:
                            {numExperts, hidExperts, dimModel},
                            inits::glorot_uniform);
     auto exp1 = bdot(sliced, W1);
+
+    bool useBiases = options->get<bool>("mixofexperts-biases");
+    if(useBiases) {
+      auto b1 = graph->param(
+          prefix + "_Expert__b1", {numExperts, 1, hidExperts}, inits::zeros);
+      exp1 = exp1 + b1;
+    }
+
     auto exp2 = relu(exp1);
+
     float ffnDropProb
       = inference ? 0 : options->get<float>("transformer-dropout-ffn");
     exp2 = dropout(exp2, ffnDropProb);
     auto expOut = bdot(exp2, W2);
+    if(useBiases) {
+      auto b2 = graph->param(
+          prefix + "_Expert__b2", {numExperts, 1, dimModel}, inits::zeros);
+      expOut = expOut + b2;
+    }
     auto weighted = expOut * reshape(topLogits, {numExperts, m, 1});
  
     // (TOKENS, DIM)
@@ -828,6 +850,13 @@ public:
           {dimEmb, dimBatch}, inits::from_vector(batch->getDataWeights()));
       sentEmb = transpose(sentEmb) * sentEmbScale;
       sentEmb = reshape(sentEmb, {1, dimBatch, 1, dimEmb});
+
+      if(opt<bool>("sentemb-projection")) {
+        auto projW = graph->param(
+            prefix_ + "_SentEmbProjW", {dimEmb, dimEmb},
+            inits::glorot_uniform);
+        sentEmb = dot(sentEmb, projW);
+      }
 
       // if(inference_)
       //   sentEmb->debug("sentemb");

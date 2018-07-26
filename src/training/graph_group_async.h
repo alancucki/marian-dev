@@ -166,10 +166,10 @@ public:
     size_t totalSize = graphs_[idx]->params()->vals()->size();
     shardOpt_[idx]->save(name + ".optimizer.npz", shardOpt_, totalSize);
 
-    if(!options_->get<bool>("overwrite") && !final) {
-      // Save a copy under model.iterXXXX.npz.optimizer.npz
-      shardOpt_[idx]->save(nameOverwrite + ".optimizer.npz", shardOpt_, totalSize);
-    }
+    // if(!options_->get<bool>("overwrite") && !final) {
+    //   // Save a copy under model.iterXXXX.npz.optimizer.npz
+    //   shardOpt_[idx]->save(nameOverwrite + ".optimizer.npz", shardOpt_, totalSize);
+    // }
   }
 
   Ptr<data::BatchStats> collectStats() {

@@ -378,6 +378,8 @@ void ConfigParser::addOptionsModel(po::options_description& desc) {
      "MoE type: balanced_moe, large_attn")
     ("mixofexperts-dim-hid", po::value<int>()->default_value(1024),
      "Moe hidden layer size of each expert")
+    ("mixofexperts-biases", po::value<bool>()->zero_tokens()->default_value(false),
+     "Experts use bias terms")
     ("mixofexperts-num-experts", po::value<int>()->default_value(256),
      "MoE number of experts")
     ("mixofexperts-sel-experts", po::value<int>()->default_value(4),
@@ -396,6 +398,8 @@ void ConfigParser::addOptionsModel(po::options_description& desc) {
      "Add rescaled sentence embs to input tokens (-1 turns it off, requires sentence emb file)")
     ("sentemb-input", po::value<bool>()->zero_tokens()->default_value(false),
      "Add sentence embedding to input embeddings")
+    ("sentemb-projection", po::value<bool>()->zero_tokens()->default_value(false),
+     "Multiply sentembs by a projection matrix")
 #ifdef CUDNN
     ("char-stride", po::value<int>()->default_value(5),
      "Width of max-pooling layer after convolution layer in char-s2s model")
@@ -913,6 +917,7 @@ void ConfigParser::parseOptions(int argc, char** argv, bool doValidate) {
   SET_OPTION("mixofexperts-dec-layers", std::vector<int>);
   SET_OPTION("mixofexperts-layer-type", std::string);
   SET_OPTION("mixofexperts-dim-hid", int);
+  SET_OPTION("mixofexperts-biases", bool);
   SET_OPTION("mixofexperts-num-experts", int);
   SET_OPTION("mixofexperts-sel-experts", int);
   SET_OPTION("mixofexperts-thresholds", bool);
@@ -922,6 +927,7 @@ void ConfigParser::parseOptions(int argc, char** argv, bool doValidate) {
 
   SET_OPTION("sentemb-scale", float);
   SET_OPTION("sentemb-input", bool);
+  SET_OPTION("sentemb-projection", bool);
   SET_OPTION("train-only", std::vector<std::string>);
 
 #ifdef CUDNN

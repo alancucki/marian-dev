@@ -105,10 +105,10 @@ public:
     size_t totalSize = graph_->params()->vals()->size();
     opt_->save(name + ".optimizer.npz", {opt_}, totalSize);
 
-    if(!options_->get<bool>("overwrite") && !final) {
-      // Save a copy under model.iterXXXX.npz.optimizer.npz
-      opt_->save(nameOverwrite + ".optimizer.npz", {opt_}, totalSize);
-    }
+    // if(!options_->get<bool>("overwrite") && !final) {
+    //   // Save a copy under model.iterXXXX.npz.optimizer.npz
+    //   opt_->save(nameOverwrite + ".optimizer.npz", {opt_}, totalSize);
+    // }
   }
 
   Ptr<data::BatchStats> collectStats() {
