@@ -567,4 +567,8 @@ Expr signum(Expr a) {
 Expr abs(Expr a) {
   return Expression<AbsNodeOp>(a);
 }
+
+Expr softplus(Expr a) {
+  return Expression<SoftplusNodeOp>(a);
+}
 }

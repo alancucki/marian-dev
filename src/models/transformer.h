@@ -403,6 +403,201 @@ public:
   /*
     Reference: https://github.com/tensorflow/tensor2tensor/blob/master/tensor2tensor/utils/expert_utils.py
   */
+  Expr LayerMoE(Ptr<ExpressionGraph> graph,
+                Ptr<data::CorpusBatch> batch,
+                Ptr<Options> options,
+                std::string prefix,
+                Expr input,
+                float noisyGateEps = 1e-2,
+                bool inference = false) {
+    // TODO Different behavior during inference?
+    // using namespace keywords;
+
+    // TODO Set some pre-conditions
+    // ABORT_IF(depthFfn < 1, "Filter depth {} is smaller than 1", depthFfn);
+
+    int hidExperts = options->get<int>("mixofexperts-dim-hid");
+    int numExperts = options->get<int>("mixofexperts-num-experts");
+    int k = options->get<int>("mixofexperts-sel-experts");
+
+    bool useThresholds = options->get<bool>("mixofexperts-thresholds");
+
+    int dimModel = input->shape()[-1];
+    int dimTime = input->shape()[-2];
+    int dimBatch = input->shape()[-3];
+    int beamSize = input->shape()[-4];
+    int numTokens = beamSize * dimBatch * dimTime;
+
+    float dropProb = inference ? 0 : options->get<float>("transformer-dropout");
+    auto opsPre = options->get<std::string>("transformer-preprocess");
+
+    int dimFfn = options->get<int>("transformer-dim-ffn");
+    int depthFfn = options->get<int>("transformer-ffn-depth");
+
+    auto act = options->get<std::string>("transformer-ffn-activation"); // XXX Unused
+    auto inputPre = PreProcess(graph, prefix + "_moebalanced", opsPre, input, dropProb);
+
+    // XXX Unused
+    // float ffnDropProb
+    //   = inference ? 0 : options->get<float>("transformer-dropout-ffn");
+
+    // (TOKENS, DIM)
+    auto inputFlat = reshape(inputPre, {numTokens, dimModel});
+
+    // auto input2 = inputFlat * inputFlat;
+    // input2->setTrainable(false);
+    // auto input_len = sum(sqrt(sum(input2, {1})), {0}) / input2->shape()[0];
+    // input_len->debug("input_len");
+
+    // Compute the gate
+    Expr gate;
+
+    // Use sentence embeddings?
+    bool sentEmbConcatGate = options->get<bool>("mixofexperts-sentemb-concat-gate");
+    bool sentEmbOnlyGate = options->get<bool>("mixofexperts-sentemb-only-gate");
+    bool regularGate = !sentEmbConcatGate && !sentEmbOnlyGate;
+
+    if(regularGate || sentEmbConcatGate) {
+      auto gateW = graph->param(
+          prefix + "_GateW", {dimModel, numExperts},
+          inits::glorot_uniform);
+      // (TOKENS, EXPERTS)
+      gate = dot(inputFlat, gateW);
+    }
+
+    if(sentEmbOnlyGate || sentEmbConcatGate) {
+      float sentEmbScale = options->get<float>("sentemb-scale");
+      auto sentEmb = graph->constant(
+          {dimModel, dimBatch}, inits::from_vector(batch->getDataWeights()));
+      sentEmb = transpose(sentEmb) * sentEmbScale;
+      sentEmb = reshape(sentEmb, {dimBatch, dimModel});
+
+      if(options->get<bool>("sentemb-projection")) {
+        auto projW = graph->param(
+            prefix + "_SentEmbProjW", {dimModel, dimModel},
+            inits::glorot_uniform);
+        sentEmb = dot(sentEmb, projW);
+      }
+
+      auto gateWsentEmb = graph->param(
+          prefix + "_GateWsentEmb", {dimModel, numExperts},
+          inits::glorot_uniform);
+
+      // auto emb2 = sentEmb * sentEmb;
+      // emb2->setTrainable(false);
+      // auto emb_len = sum(sqrt(sum(emb2, {1})), {0}) / emb2->shape()[0];
+      // emb_len->debug("emb_len");
+
+      // (BSZ, EXPERTS)
+      auto gateEmb = dot(sentEmb, gateWsentEmb);
+      // if(inference) {
+      //   sentEmb->debug("INFERENCE: sent emb");
+      //   gateEmb->debug("INFERENCE: raw gate emb");
+      // } else {
+      //   // sentEmb->debug("sent emb");
+      // }
+      // else
+      //     gateEmb->debug("raw gate emb");
+
+      // (BSZ, EXPERTS * TIME)
+      gateEmb = repeat(gateEmb, dimTime, {1});
+      // (BSZ * TIME, EXPERTS)
+      gateEmb = reshape(gateEmb, {dimBatch * dimTime, numExperts});
+
+      /// // (BSZ * TIME, EXPERTS)
+      /// gateEmb = repeat(gateEmb, dimTime, {0});
+      // if(inference)
+      //     gateEmb->debug("INFERENCE: gate emb");
+      // else
+      //     gateEmb->debug("gate emb");
+
+      ///// // (TOKENS, EXPERTS)
+      gateEmb = repeat(gateEmb, beamSize, {0}); // XXX I did not test that
+
+      ///// // (TOKENS, EXPERTS)
+      // gateEmb = repeat(reshape(gateEmb, {1, -1}), beamSize, {0});
+      // gateEmb->debug("repeated");
+      // gateEmb = reshape(gateEmb, {-1, numExperts});
+      // if(inference)
+      //     gateEmb->debug("INFERENCE: gate emb corrected for beam size");
+      // else
+      //     gateEmb->debug("gaemb corrected for beam size");
+
+      // gateEmb->debug("gateEmb"); // XXX
+      // std::cout << "sentemb-gate (concat? " << sentEmbConcatGate << ")\n"; // XXX
+
+      gate = sentEmbConcatGate ? gate + gateEmb : gateEmb;
+    }
+
+    if(!inference) {
+        auto noiseW = graph->param(
+            prefix + "_NoiseW", {dimModel, numExperts}, inits::glorot_uniform);
+        auto normal = graph->constant(
+            {numTokens, numExperts}, inits::from_vector(batch->getDataWeights()));
+        gate = gate + normal * (softplus(dot(inputFlat, noiseW)) + noisyGateEps);
+    }
+
+    // TODO
+    // TODO Slicer, stitcher i normalizer
+    // TODO
+
+    // (TOKENS, EXPERTS)
+    auto soft = softmax(gate);
+
+    bool topkOverSoftmax = options->get<bool>("mixofexperts-topk-over-softmax");
+    auto trGate = (topkOverSoftmax ? transpose(soft) : transpose(gate));
+
+    // gate->debug("GATE" + gate->label());
+    // trGate->debug("TRGATE" + trGate->label());
+    auto trTopMask = top_k_mask(trGate, m);
+    // (TOKENS, EXPERTS)
+    auto topMask = transpose(trTopMask);
+    trGate->setTrainable(false);
+    trTopMask->setTrainable(false);
+    topMask->setTrainable(false);
+
+    if(useThresholds) {
+      auto thresh = graph->param(prefix + "_MoeThreshold", {1, numExperts}, inits::from_value(0.f));
+      auto maskThreshold = clip(signum(gate - thresh) - 0.5, 0.5) + 0.5;
+      maskThreshold->setTrainable(false);
+      if(inference) {
+        // Set to zero any excess indices, whose corresponding value is below threshold,
+        // yet they made it into top M
+        // topMask->debug("top mask 1");
+        topMask = (topMask + 1.0) * maskThreshold - 1.0;
+        // topMask->debug("top mask 2");
+        // auto maskBatchwise = clip(topMask + 1.0, 1.0);
+        // maskBatchwise->setTrainable(false);
+        // auto foo = sum(maskBatchwise, {0});
+        // foo->setTrainable(false);
+        // std::cout << "num tokens: " << numTokens << "\n";
+        // foo->debug("# of selected tokens per expert");
+        // auto bar = sum(foo, {1});
+        // bar->debug("# of selected tokens total");
+      } else {
+        auto maskBatchwise = clip(topMask + 1.0, 1.0);
+        maskBatchwise->setTrainable(false);
+        auto thresholdCost = 0.0001 * sum(sum(abs(maskThreshold - maskBatchwise) * abs(gate - thresh), {1}), {0});
+        moeThreshCosts.push_back(thresholdCost);
+
+        // thresholdCost = sum(thresholdCost, keywords::axis = 1);
+        // thresholdCost->debug("threshold cost");
+        // thresh->debug(thresh->label());
+        //
+        /*
+        auto gateMiss = maskThreshold - maskBatchwise;
+        gateMiss = gateMiss * gateMiss;
+        gateMiss = sum(sum(gateMiss, {0}), {1});
+        gateMiss = gateMiss / maskThreshold->shape().elements();
+        gateMiss->setTrainable(false);
+        gateMiss->debug("GATE MISMATCH");
+        */
+      }
+    }
+
+  /*
+    Reference: https://github.com/tensorflow/tensor2tensor/blob/master/tensor2tensor/utils/expert_utils.py
+  */
   Expr LayerStrictlyBalancedMoE(Ptr<ExpressionGraph> graph,
                                 Ptr<data::CorpusBatch> batch,
                                 Ptr<Options> options,
@@ -444,7 +639,7 @@ public:
     int dimFfn = options->get<int>("transformer-dim-ffn");
     int depthFfn = options->get<int>("transformer-ffn-depth");
     /****/
-    auto act = options->get<std::string>("transformer-ffn-activation");
+    auto act = options->get<std::string>("transformer-ffn-activation"); // XXX Unused
     auto inputPre = PreProcess(graph, prefix + "_moebalanced", opsPre, input, dropProb);
 
     // XXX Unused

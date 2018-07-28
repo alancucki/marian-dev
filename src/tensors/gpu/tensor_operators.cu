@@ -1001,6 +1001,39 @@ void TopKIndsGrad(Tensor grad, Tensor adj) {
       grad->data(), rows, cols);
 }
 
+__global__ void gTopKMask2Mapping(float* out,
+                                  const functional::Shape inShape,
+                                  const float* in) {
+  int rows = inShape.elements() / inShape.back();
+  int cols = inShape.back();
+
+  // Use one block, every thread goes over a row in sequence
+  if(blockIdx.x == 0) {
+    for(int tid = 0; tid < rows; tid += blockDim.x) {
+      int r = tid + threadIdx.x;
+      if(r < rows) {
+        int cnt = 1.f;
+        for(int c = 0; c < cols; ++c) {
+          int pos = r * cols + c;
+          // Count tokens from 1, and 0 means no token
+          out[pos] = (in[pos] > -0.5f) * cnt;
+          cnt += (out[pos] > 0.5);
+        }
+      }
+    }
+  }
+}
+
+__global__ void gBalancedMoeSlicerWithCumulMask(float* out,
+                                                const int numTokens,
+                                                const int dim,
+                                                const int exp,
+                                                const int m,
+                                                const float* in,
+                                                const float* cmask) {
+  // TODO
+}
+
 ///////////////////////////////////////////////////////
 
 __global__ void gSoftmaxGrad(float* grad,

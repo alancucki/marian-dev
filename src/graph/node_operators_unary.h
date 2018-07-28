@@ -1335,4 +1335,21 @@ public:
 
   const std::string type() { return "abs"; }
 };
+
+struct SoftplusNodeOp : public UnaryNodeOp {
+  LogNodeOp(Expr a) : UnaryNodeOp(a) {}
+
+  NodeOps forwardOps() {
+    using namespace functional;
+    return {NodeOp(Element(_1 = log(1.f + exp(_2)), val_, child(0)->val()))};
+  }
+
+  NodeOps backwardOps() {
+    using namespace functional;
+    return {
+        NodeOp(Add(_1 * (1.f / (1.f + exp(-1.f *_2))), child(0)->grad(), adj_, child(0)->val()))};
+  }
+
+  const std::string type() { return "softplus"; }
+};
 }
